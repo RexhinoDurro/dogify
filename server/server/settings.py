@@ -44,7 +44,7 @@ MIDDLEWARE = [
     'bot_detection.middleware.BotProtectionMiddleware',
 ]
 
-ROOT_URLCONF = 'dogify.urls'
+ROOT_URLCONF = 'server.urls'
 
 TEMPLATES = [
     {
@@ -62,7 +62,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'dogify.wsgi.application'
+WSGI_APPLICATION = 'server.wsgi.application'
 
 # Database - Using SQLite3 for simplicity
 DATABASES = {

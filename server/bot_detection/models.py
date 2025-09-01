@@ -1,11 +1,10 @@
-# models.py - Django models for bot detection and tracking
+# models.py - Django models for bot detection and tracking (SQLite compatible)
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 import json
 import uuid
-from django.contrib.postgres.fields import JSONField, ArrayField
 from django.db.models import Q, Count, Avg
 from datetime import timedelta
 from django.core.cache import cache
@@ -72,11 +71,8 @@ class BotDetection(models.Model):
     confidence_score = models.FloatField(
         validators=[MinValueValidator(0.0), MaxValueValidator(1.0)]
     )
-    detection_methods = ArrayField(
-        models.CharField(max_length=100),
-        default=list,
-        blank=True
-    )
+    # Store as JSON string instead of ArrayField
+    detection_methods = models.TextField(default='[]', blank=True)
     
     # Request details
     url_path = models.CharField(max_length=500)
@@ -87,11 +83,11 @@ class BotDetection(models.Model):
     country_code = models.CharField(max_length=2, blank=True)
     city = models.CharField(max_length=100, blank=True)
     
-    # Behavioral data
-    behavioral_data = JSONField(default=dict, blank=True)
+    # Behavioral data - stored as JSON string
+    behavioral_data = models.TextField(default='{}', blank=True)
     
-    # Technical details
-    headers = JSONField(default=dict, blank=True)
+    # Technical details - stored as JSON string
+    headers = models.TextField(default='{}', blank=True)
     
     # Timing
     timestamp = models.DateTimeField(auto_now_add=True)
@@ -115,6 +111,39 @@ class BotDetection(models.Model):
     
     def __str__(self):
         return f"{self.ip_address} - {self.status} ({self.confidence_score:.2f})"
+    
+    def get_detection_methods(self):
+        """Get detection methods as a list"""
+        try:
+            return json.loads(self.detection_methods)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    
+    def set_detection_methods(self, methods_list):
+        """Set detection methods from a list"""
+        self.detection_methods = json.dumps(methods_list)
+    
+    def get_behavioral_data(self):
+        """Get behavioral data as a dict"""
+        try:
+            return json.loads(self.behavioral_data)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    
+    def set_behavioral_data(self, data_dict):
+        """Set behavioral data from a dict"""
+        self.behavioral_data = json.dumps(data_dict)
+    
+    def get_headers(self):
+        """Get headers as a dict"""
+        try:
+            return json.loads(self.headers)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    
+    def set_headers(self, headers_dict):
+        """Set headers from a dict"""
+        self.headers = json.dumps(headers_dict)
     
     @classmethod
     def get_ip_stats(cls, ip_address, hours=24):
@@ -147,19 +176,13 @@ class BehavioralPattern(models.Model):
     
     # Scroll behavior
     scroll_events = models.IntegerField(default=0)
-    scroll_patterns = ArrayField(
-        models.FloatField(),
-        default=list,
-        blank=True
-    )
+    # Store as JSON string instead of ArrayField
+    scroll_patterns = models.TextField(default='[]', blank=True)
     
     # Keyboard behavior
     keyboard_events = models.IntegerField(default=0)
-    keyboard_rhythm = ArrayField(
-        models.FloatField(),
-        default=list,
-        blank=True
-    )
+    # Store as JSON string instead of ArrayField
+    keyboard_rhythm = models.TextField(default='[]', blank=True)
     
     # Focus patterns
     focus_events = models.IntegerField(default=0)
@@ -192,6 +215,28 @@ class BehavioralPattern(models.Model):
             models.Index(fields=['ip_address', 'created_at']),
             models.Index(fields=['session_id']),
         ]
+    
+    def get_scroll_patterns(self):
+        """Get scroll patterns as a list"""
+        try:
+            return json.loads(self.scroll_patterns)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    
+    def set_scroll_patterns(self, patterns_list):
+        """Set scroll patterns from a list"""
+        self.scroll_patterns = json.dumps(patterns_list)
+    
+    def get_keyboard_rhythm(self):
+        """Get keyboard rhythm as a list"""
+        try:
+            return json.loads(self.keyboard_rhythm)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    
+    def set_keyboard_rhythm(self, rhythm_list):
+        """Set keyboard rhythm from a list"""
+        self.keyboard_rhythm = json.dumps(rhythm_list)
     
     def calculate_human_score(self):
         """Calculate how human-like the behavior is"""
@@ -335,6 +380,8 @@ class SecurityLog(models.Model):
         ('suspicious_activity', 'Suspicious Activity'),
         ('rate_limit_exceeded', 'Rate Limit Exceeded'),
         ('honeypot_triggered', 'Honeypot Triggered'),
+        ('model_retrained', 'ML Model Retrained'),
+        ('ip_unblocked', 'IP Unblocked'),
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -343,7 +390,8 @@ class SecurityLog(models.Model):
     ip_address = models.GenericIPAddressField()
     user_agent = models.TextField(blank=True)
     description = models.TextField()
-    details = JSONField(default=dict, blank=True)
+    # Store details as JSON string
+    details = models.TextField(default='{}', blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
     
     class Meta:
@@ -354,14 +402,31 @@ class SecurityLog(models.Model):
             models.Index(fields=['ip_address', 'timestamp']),
         ]
     
+    def get_details(self):
+        """Get details as a dict"""
+        try:
+            return json.loads(self.details)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    
+    def set_details(self, details_dict):
+        """Set details from a dict"""
+        self.details = json.dumps(details_dict)
+    
     @classmethod
     def log_event(cls, event_type, ip_address, description, severity='medium', **kwargs):
         """Log a security event"""
-        return cls.objects.create(
+        log_entry = cls(
             event_type=event_type,
             severity=severity,
             ip_address=ip_address,
             description=description,
-            user_agent=kwargs.get('user_agent', ''),
-            details=kwargs.get('details', {})
+            user_agent=kwargs.get('user_agent', '')
         )
+        
+        # Set details if provided
+        if 'details' in kwargs:
+            log_entry.set_details(kwargs['details'])
+        
+        log_entry.save()
+        return log_entry
