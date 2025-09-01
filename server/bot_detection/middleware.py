@@ -131,9 +131,13 @@ class BotProtectionMiddleware:
         return response
     
     def _should_skip_protection(self, request):
-        """Check if protection should be skipped for this request"""
-        # Skip for admin panel
+    
+    # Skip for admin panel
         if request.path.startswith('/admin/'):
+            return True
+        
+        # Skip for API endpoints - THIS IS IMPORTANT
+        if request.path.startswith('/api/'):
             return True
         
         # Skip for API documentation
@@ -145,7 +149,7 @@ class BotProtectionMiddleware:
             return True
         
         return False
-    
+        
     def _is_ip_blacklisted(self, ip_address):
         """Check if IP is blacklisted (with caching)"""
         return IPBlacklist.is_blacklisted(ip_address)

@@ -287,16 +287,36 @@ const BotProtection: React.FC<BotProtectionProps> = ({ children, onBotDetected, 
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          ...result,
-          behavioral: behaviorMetrics,
+          // Map frontend fields to backend expected fields
+          user_agent: result.userAgent,
+          fingerprint: result.fingerprint,
+          is_bot: result.isBot,
+          confidence: result.confidence,
+          methods: result.detectionMethods, // backend expects 'methods', not 'detectionMethods'
+          behavioral: {
+            mouseMovements: behaviorMetrics.mouseMovements,
+            keyboardEvents: behaviorMetrics.keyboardEvents,
+            touchEvents: behaviorMetrics.touchEvents,
+            timeSpent: behaviorMetrics.timeSpent,
+            clickPatterns: behaviorMetrics.clickPatterns,
+            scrollBehavior: behaviorMetrics.scrollBehavior,
+            focusEvents: behaviorMetrics.focusEvents,
+            pageVisibility: behaviorMetrics.pageVisibility
+          },
           timestamp: new Date().toISOString(),
           page: window.location.href,
-          referrer: document.referrer
+          referrer: document.referrer,
+          url_path: window.location.pathname,
+          http_method: 'GET' // Since this is a page load
         })
       });
-
+  
       if (!response.ok) {
-        console.warn('Failed to report bot detection');
+        const errorText = await response.text();
+        console.warn('Failed to report bot detection:', response.status, errorText);
+      } else {
+        const responseData = await response.json();
+        console.log('Bot detection reported successfully:', responseData);
       }
     } catch (error) {
       console.error('Failed to report bot:', error);

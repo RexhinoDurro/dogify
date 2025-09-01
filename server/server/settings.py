@@ -126,14 +126,32 @@ REST_FRAMEWORK = {
 }
 
 # CORS settings
+# In server/server/settings.py
+# CORS settings
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",  # Add this line
+    "http://127.0.0.1:5174",  # Add this line
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+
+# Also add these for better CORS handling
+CORS_ALLOW_ALL_ORIGINS = False  # Keep this False for security
+CORS_ALLOWED_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 # Bot Detection Settings (Simple)
 BOT_DETECTION_SETTINGS = {
