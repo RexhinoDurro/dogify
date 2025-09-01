@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 import hashlib
 
-from .services.bot_detection_service import BotDetectionService
+from .bot_detection_service import BotDetectionService
 from .models import BotDetection, IPBlacklist, SecurityLog, BehavioralPattern
 from .middleware import get_client_ip
 

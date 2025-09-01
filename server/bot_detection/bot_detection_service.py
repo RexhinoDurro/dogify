@@ -10,17 +10,19 @@ from django.utils import timezone
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
+from django.db.models import Count, Q, Avg
 import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 import joblib
 import os
 
-from bot_detection.models import (
+from .models import (
     BotDetection, IPBlacklist, BehavioralPattern, 
     RequestPattern, SecurityLog, ThreatIntelligence
 )
-from server.bot_detection import models
+
+
 
 class BotDetectionService:
     """Advanced bot detection service with ML capabilities"""
@@ -110,12 +112,19 @@ class BotDetectionService:
             confidence_scores.append(header_result['confidence'])
         
         # 3. Request Pattern Analysis
+        if ip_address is None:
+            return {
+                'confidence': 0,
+                'methods': ['missing_ip_address'],
+                'details': 'IP address is missing'
+            }
         pattern_result = self._analyze_request_patterns(ip_address)
         if pattern_result['confidence'] > 0:
             detection_methods.extend(pattern_result['methods'])
             confidence_scores.append(pattern_result['confidence'])
         
         # 4. Behavioral Analysis
+        behavior_result = None
         if behavioral_data:
             behavior_result = self._analyze_behavioral_data(behavioral_data)
             if behavior_result['confidence'] > 0:
@@ -714,10 +723,10 @@ class BotDetectionService:
         # Last 24 hours stats
         last_24h = now - timedelta(hours=24)
         stats_24h = BotDetection.objects.filter(timestamp__gte=last_24h).aggregate(
-            total_requests=models.Count('id'),
-            bot_detections=models.Count('id', filter=models.Q(is_bot=True)),
-            avg_confidence=models.Avg('confidence_score'),
-            unique_ips=models.Count('ip_address', distinct=True)
+            total_requests=Count('id'),
+            bot_detections=Count('id', filter=Q(is_bot=True)),
+            avg_confidence=Avg('confidence_score'),
+            unique_ips=Count('ip_address', distinct=True)
         )
         
         # Overall stats
