@@ -1,0 +1,21 @@
+# requirements.txt - Simple version without Redis/Docker/GeoIP conflicts
+# Core Django
+Django==4.2.7
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+
+# Machine Learning (for bot detection)
+scikit-learn==1.3.2
+numpy==1.24.3
+joblib==1.3.2
+
+
+geoip2==4.7.0
+maxminddb>=2.3.0
+
+# Utils
+python-dateutil==2.8.2
+
+# Production (optional)
+whitenoise==6.6.0
+gunicorn==21.2.0
