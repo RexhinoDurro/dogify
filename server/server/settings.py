@@ -1,4 +1,4 @@
-# dogify/settings.py - Simple settings with SQLite3
+# server/server/settings.py - Enhanced settings with bot middleware integration
 import os
 from pathlib import Path
 
@@ -11,7 +11,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-your-secret-key-chang
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0').split(',')
 
 # Application definition
 INSTALLED_APPS = [
@@ -40,7 +40,10 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     
-    # Custom bot protection middleware
+    # Enhanced Bot Detection Middleware (serves HTML to bots, redirects humans)
+    'bot_detection.enhanced_bot_middleware.EnhancedBotHTMLMiddleware',
+    
+    # Basic Protection Middleware (API protection only)
     'bot_detection.middleware.BotProtectionMiddleware',
 ]
 
@@ -125,21 +128,19 @@ REST_FRAMEWORK = {
     }
 }
 
-# CORS settings
-# In server/server/settings.py
-# CORS settings
+# CORS settings - Updated for enhanced middleware
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://localhost:5173",
+    "http://localhost:5173",  # Main React app
     "http://127.0.0.1:5173",
-    "http://localhost:5174",  # Add this line
-    "http://127.0.0.1:5174",  # Add this line
+    "http://localhost:3001",  # Bot detection React app  
+    "http://127.0.0.1:3001",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
 
-# Also add these for better CORS handling
+# Enhanced CORS handling
 CORS_ALLOW_ALL_ORIGINS = False  # Keep this False for security
 CORS_ALLOWED_HEADERS = [
     'accept',
@@ -151,32 +152,62 @@ CORS_ALLOWED_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'x-bot-detection',  # Custom header for bot detection
+    'x-fingerprint',    # Custom header for fingerprinting
 ]
 
-# Bot Detection Settings (Simple)
+# Enhanced Bot Detection Settings
 BOT_DETECTION_SETTINGS = {
     'ENABLE_BOT_BLOCKING': True,
-    'STRICT_MODE': os.environ.get('BOT_DETECTION_STRICT', 'True').lower() == 'true',
-    'MAIN_SITE_URL': os.environ.get('MAIN_SITE_URL', 'https://yourmainsite.com'),
-    'REDIRECT_DELAY': 3,  # seconds
+    'ENABLE_HTML_SERVING': True,  # NEW: Enable HTML serving to bots
+    'STRICT_MODE': os.environ.get('BOT_DETECTION_STRICT', 'False').lower() == 'true',
+    'MAIN_SITE_URL': os.environ.get('MAIN_SITE_URL', 'http://localhost:5173'),
+    'BOT_SITE_URL': os.environ.get('BOT_SITE_URL', 'http://localhost:3001'),
+    'REDIRECT_DELAY': 2,  # seconds
     'AUTO_BLACKLIST_THRESHOLD': 0.8,
-    'RATE_LIMIT_PER_MINUTE': 60,
+    'RATE_LIMIT_PER_MINUTE': 100,
     'FACEBOOK_BOT_DETECTION': True,
+    'SERVE_HTML_TO_BOTS': True,  # NEW: Serve static HTML to bots
+    'HTML_CACHE_DURATION': 3600,  # Cache HTML responses for 1 hour
 }
 
-# Logging
+# Admin API Key for management endpoints
+ADMIN_API_KEY = os.environ.get('ADMIN_API_KEY', 'dogify_admin_2025_change_me')
+
+# Threat Intelligence Settings
+THREAT_INTEL_WEBHOOK_SECRET = os.environ.get('THREAT_INTEL_SECRET', 'webhook_secret_change_me')
+
+# Enhanced Logging with bot detection focus
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
     'handlers': {
         'file': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
             'filename': BASE_DIR / 'logs' / 'bot_detection.log',
+            'formatter': 'verbose',
+        },
+        'bot_file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'logs' / 'bot_visits.log',
+            'formatter': 'simple',
         },
         'console': {
             'level': 'DEBUG' if DEBUG else 'INFO',
             'class': 'logging.StreamHandler',
+            'formatter': 'simple',
         },
     },
     'root': {
@@ -189,8 +220,34 @@ LOGGING = {
             'level': 'DEBUG' if DEBUG else 'INFO',
             'propagate': False,
         },
+        'bot_visits': {
+            'handlers': ['console', 'bot_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }
 
-# Create logs directory
+# Create required directories
 os.makedirs(BASE_DIR / 'logs', exist_ok=True)
+os.makedirs(BASE_DIR / 'static', exist_ok=True)
+os.makedirs(BASE_DIR / 'ml_models', exist_ok=True)
+
+# Security Headers for enhanced protection
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+
+# Session Configuration
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+SESSION_COOKIE_AGE = 3600  # 1 hour
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# Additional Security Settings for Production
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
