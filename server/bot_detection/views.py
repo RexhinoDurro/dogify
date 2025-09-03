@@ -1,4 +1,4 @@
-# views.py - Complete Django views for bot detection API
+# views.py - Enhanced version keeping all existing views + adding Facebook bot support
 from django.http import JsonResponse, HttpResponseForbidden
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 import hashlib
 import traceback
+import re
 
 from .bot_detection_service import AdvancedBotDetectionService
 from .models import BotDetection, IPBlacklist, SecurityLog, BehavioralPattern
@@ -21,7 +22,7 @@ from .middleware import get_client_ip
 bot_service = AdvancedBotDetectionService()
 
 class BotDetectionView(View):
-    """Main bot detection endpoint"""
+    """Enhanced main bot detection endpoint with Facebook bot focus"""
     
     @method_decorator(csrf_exempt)
     def dispatch(self, *args, **kwargs):
@@ -33,15 +34,21 @@ class BotDetectionView(View):
             try:
                 data = json.loads(request.body)
             except json.JSONDecodeError as e:
-                print(f"JSON decode error: {e}")
-                print(f"Request body: {request.body}")
+                print(f"❌ JSON decode error: {e}")
                 return JsonResponse({'error': 'Invalid JSON data', 'details': str(e)}, status=400)
             
             # Get client information
             client_ip = get_client_ip(request)
             user_agent = data.get('user_agent', request.META.get('HTTP_USER_AGENT', ''))
             
-            print(f"Bot detection request from {client_ip}: {data}")
+            print(f"🔍 Enhanced bot detection request from {client_ip}")
+            print(f"📝 User Agent: {user_agent[:100]}...")
+            
+            # Enhanced Facebook bot detection
+            is_facebook_bot = self._is_facebook_bot(user_agent)
+            if is_facebook_bot:
+                print(f"🤖📘 Facebook bot detected immediately: {user_agent}")
+                return self._handle_facebook_bot(client_ip, user_agent, data)
             
             # Build request data for analysis
             request_data = {
@@ -56,33 +63,42 @@ class BotDetectionView(View):
                 'behavioral_data': data.get('behavioral', {}),
                 'confidence': data.get('confidence', 0),
                 'methods': data.get('methods', []),
-                'response_time': time.time() - request._start_time if hasattr(request, '_start_time') else None
+                'response_time': time.time() - getattr(request, '_start_time', time.time())
             }
             
             # If the frontend is reporting a bot detection, process it
             if data.get('is_bot', False) and data.get('confidence', 0) > 0.6:
-                print(f"Processing frontend bot report for {client_ip}")
-                # This is a bot report from the frontend
-                self._handle_frontend_bot_report(request_data, data)
-                
-                return JsonResponse({
-                    'status': 'processed',
-                    'action': 'blacklisted',
-                    'confidence': data.get('confidence', 0),
-                    'message': 'Bot report processed successfully'
-                })
+                print(f"🚨 Frontend reported high-confidence bot: {client_ip}")
+                return self._handle_frontend_bot_report(request_data, data)
             
             # Otherwise, run our own bot detection
-            print(f"Running bot detection analysis for {client_ip}")
+            print(f"🔍 Running server-side bot detection for {client_ip}")
             result = bot_service.detect_bot(request_data)
+            
+            # Enhanced Facebook bot handling in server results
+            facebook_indicators = [
+                'facebook_external_hit', 'facebook_bot', 'facebook_catalog',
+                'facebookexternalhit', 'facebot'
+            ]
+            
+            is_facebook_detection = any(
+                method for method in result['methods'] 
+                if any(fb_indicator in method.lower() for fb_indicator in facebook_indicators)
+            )
+            
+            if is_facebook_detection:
+                print(f"🤖📘 Facebook bot detected via server analysis")
+                result['is_facebook_bot'] = True
+                result['confidence'] = max(result['confidence'], 0.95)
             
             # If high confidence bot, block immediately
             if result['is_bot'] and result['confidence'] >= 0.8:
-                print(f"High confidence bot detected: {client_ip} - {result['confidence']}")
+                print(f"🚫 High confidence bot detected: {client_ip} - {result['confidence']}")
                 return HttpResponseForbidden(json.dumps({
                     'error': 'Access denied',
                     'reason': 'Bot activity detected',
                     'confidence': result['confidence'],
+                    'is_facebook_bot': result.get('is_facebook_bot', False),
                     'methods': result['methods'][:3]  # Don't reveal all methods
                 }), content_type='application/json')
             
@@ -96,27 +112,115 @@ class BotDetectionView(View):
                 'confidence': round(result['confidence'], 3),
                 'blocked': result['is_bot'] and result['confidence'] >= 0.8,
                 'warning': result['confidence'] >= 0.5,
+                'is_facebook_bot': result.get('is_facebook_bot', False),
                 'session_id': self._generate_session_id(client_ip),
-                'message': 'Analysis completed successfully'
+                'message': 'Enhanced analysis completed successfully',
+                'backend_verification': True
             }
             
-            print(f"Bot detection response for {client_ip}: {response_data}")
+            print(f"✅ Enhanced detection response for {client_ip}: Bot={response_data['is_bot']}, Confidence={response_data['confidence']}, Facebook={response_data['is_facebook_bot']}")
             return JsonResponse(response_data)
             
         except Exception as e:
-            print(f"Bot detection error: {e}")
-            print(f"Traceback: {traceback.format_exc()}")
+            print(f"❌ Enhanced bot detection error: {e}")
+            print(f"📋 Traceback: {traceback.format_exc()}")
             return JsonResponse({
-                'error': 'Detection failed', 
+                'error': 'Enhanced detection failed', 
                 'details': str(e),
-                'status': 'error'
+                'status': 'error',
+                'backend_verification': False
             }, status=500)
+    
+    def _is_facebook_bot(self, user_agent):
+        """Quick Facebook bot detection"""
+        if not user_agent:
+            return False
+            
+        facebook_patterns = [
+            r'facebookexternalhit',
+            r'facebot',
+            r'facebookcatalog',
+            r'facebook.*bot',
+            r'facebook.*crawler'
+        ]
+        
+        user_agent_lower = user_agent.lower()
+        for pattern in facebook_patterns:
+            if re.search(pattern, user_agent_lower):
+                return True
+        
+        return False
+    
+    def _handle_facebook_bot(self, ip_address, user_agent, data):
+        """Special handling for Facebook bots"""
+        print(f"🤖📘 Handling Facebook bot from {ip_address}")
+        
+        try:
+            # Create detection record for Facebook bot
+            bot_detection = BotDetection.objects.create(
+                ip_address=ip_address,
+                user_agent=user_agent[:1000],
+                fingerprint=data.get('fingerprint', '')[:64],
+                is_bot=True,
+                confidence_score=0.95,  # High confidence for Facebook bots
+                url_path=data.get('url_path', '/')[:500],
+                http_method=data.get('http_method', 'GET')[:10],
+                referrer=data.get('referrer', '')[:500],
+                country_code='',
+                city='',
+                status='bot',
+            )
+            
+            # Set detection methods
+            bot_detection.set_detection_methods(['facebook_bot_detected', 'user_agent_facebook'])
+            bot_detection.set_behavioral_data(data.get('behavioral', {}))
+            bot_detection.save()
+            
+            # Log Facebook bot visit (as info, not critical)
+            SecurityLog.log_event(
+                event_type='bot_detected',
+                ip_address=ip_address,
+                description=f'Facebook bot detected: {user_agent[:200]}',
+                severity='medium',  # Facebook bots are legitimate
+                user_agent=user_agent[:500],
+                details={
+                    'bot_type': 'facebook',
+                    'confidence': 0.95,
+                    'detection_id': str(bot_detection.id),
+                    'legitimate_crawler': True
+                }
+            )
+            
+            # Return response optimized for Facebook
+            return JsonResponse({
+                'status': 'facebook_bot_detected',
+                'is_bot': True,
+                'is_facebook_bot': True,
+                'confidence': 0.95,
+                'blocked': False,  # Don't block Facebook bots
+                'message': 'Facebook bot detected - showing optimized content',
+                'show_dog_website': True,  # Signal to show dog website
+                'backend_verification': True
+            })
+            
+        except Exception as e:
+            print(f"❌ Error handling Facebook bot: {e}")
+            return JsonResponse({
+                'status': 'facebook_bot_detected',
+                'is_bot': True,
+                'is_facebook_bot': True,
+                'confidence': 0.95,
+                'blocked': False,
+                'show_dog_website': True,
+                'backend_verification': False,
+                'error': str(e)
+            })
     
     def _handle_frontend_bot_report(self, request_data, frontend_data):
         """Handle bot report from frontend"""
         try:
             ip_address = request_data['ip_address']
-            print(f"Adding {ip_address} to blacklist based on frontend report")
+            print(f"🚨 Adding {ip_address} to blacklist based on frontend report")
             
             # Add to blacklist immediately
             blacklist_entry, created = IPBlacklist.objects.get_or_create(
@@ -132,7 +236,7 @@ class BotDetectionView(View):
             )
             
             if not created:
-                print(f"Updating existing blacklist entry for {ip_address}")
+                print(f"🔄 Updating existing blacklist entry for {ip_address}")
                 blacklist_entry.detection_count += 1
                 blacklist_entry.confidence_score = max(
                     blacklist_entry.confidence_score,
@@ -141,12 +245,12 @@ class BotDetectionView(View):
                 blacklist_entry.last_seen = timezone.now()
                 blacklist_entry.save()
             else:
-                print(f"Created new blacklist entry for {ip_address}")
+                print(f"✅ Created new blacklist entry for {ip_address}")
             
             # Create bot detection record
             bot_detection = BotDetection.objects.create(
                 ip_address=ip_address,
-                user_agent=request_data['user_agent'][:500],  # TextField but let's be safe
+                user_agent=request_data['user_agent'][:500],
                 fingerprint=request_data['fingerprint'][:64],
                 is_bot=True,
                 confidence_score=min(frontend_data.get('confidence', 0.9), 1.0),
@@ -162,7 +266,7 @@ class BotDetectionView(View):
             # Set JSON fields properly
             bot_detection.set_detection_methods(frontend_data.get('methods', ['frontend_detection']))
             bot_detection.set_behavioral_data(request_data.get('behavioral_data', {}))
-            bot_detection.set_headers({k: str(v)[:200] for k, v in request_data.get('headers', {}).items()})  # Limit header lengths
+            bot_detection.set_headers({k: str(v)[:200] for k, v in request_data.get('headers', {}).items()})
             bot_detection.save()
             
             # Log the detection
@@ -182,11 +286,11 @@ class BotDetectionView(View):
             
             # Clear cache
             cache.delete(f"blacklist_{ip_address}")
-            print(f"Successfully processed frontend bot report for {ip_address}")
+            print(f"✅ Successfully processed frontend bot report for {ip_address}")
             
         except Exception as e:
-            print(f"Failed to handle frontend bot report: {e}")
-            print(f"Traceback: {traceback.format_exc()}")
+            print(f"❌ Failed to handle frontend bot report: {e}")
+            print(f"📋 Traceback: {traceback.format_exc()}")
             raise  # Re-raise to be handled by the main exception handler
     
     def _store_behavioral_data(self, ip_address, behavioral_data):
@@ -221,10 +325,10 @@ class BotDetectionView(View):
                 pattern.time_on_page = behavioral_data.get('timeSpent', 0) / 1000
                 pattern.save()
                 
-            print(f"Stored behavioral data for {ip_address}")
+            print(f"📊 Stored behavioral data for {ip_address}")
                 
         except Exception as e:
-            print(f"Failed to store behavioral data: {e}")
+            print(f"❌ Failed to store behavioral data: {e}")
     
     def _generate_session_id(self, ip_address):
         """Generate session ID based on IP and time window"""
@@ -245,7 +349,7 @@ class SecurityBotDetectionView(View):
             client_ip = get_client_ip(request)
             user_agent = request.META.get('HTTP_USER_AGENT', '')
             
-            print(f"Security bot detection triggered for {client_ip}")
+            print(f"🚨 Security bot detection triggered for {client_ip}")
             
             # Immediate blacklisting for this endpoint
             blacklist_entry, created = IPBlacklist.objects.get_or_create(
@@ -282,11 +386,11 @@ class SecurityBotDetectionView(View):
             # Clear relevant caches
             cache.delete(f"blacklist_{client_ip}")
             
-            print(f"Security blacklisting completed for {client_ip}")
+            print(f"🚫 Security blacklisting completed for {client_ip}")
             return JsonResponse({'status': 'blocked', 'action': 'blacklisted'})
             
         except Exception as e:
-            print(f"Security bot detection error: {e}")
+            print(f"❌ Security bot detection error: {e}")
             return JsonResponse({'error': 'Security detection failed', 'details': str(e)}, status=500)
 
 class GetClientIPView(View):
@@ -300,13 +404,13 @@ class GetClientIPView(View):
             is_blacklisted = IPBlacklist.is_blacklisted(client_ip)
             
             if is_blacklisted:
-                print(f"IP check: {client_ip} is blacklisted")
+                print(f"🚫 IP check: {client_ip} is blacklisted")
                 return HttpResponseForbidden(json.dumps({
                     'error': 'IP blacklisted',
                     'ip': client_ip
                 }), content_type='application/json')
             
-            print(f"IP check: {client_ip} is clean")
+            print(f"✅ IP check: {client_ip} is clean")
             return JsonResponse({
                 'ip': client_ip,
                 'safe': True,
@@ -314,7 +418,7 @@ class GetClientIPView(View):
             })
             
         except Exception as e:
-            print(f"Get IP error: {e}")
+            print(f"❌ Get IP error: {e}")
             return JsonResponse({'error': 'Failed to get IP', 'details': str(e)}, status=500)
 
 class BotStatisticsView(View):
@@ -329,7 +433,7 @@ class BotStatisticsView(View):
             if not auth_header == f'Bearer {api_key}':
                 return JsonResponse({'error': 'Authentication required'}, status=401)
             
-            print("Generating bot statistics...")
+            print("📊 Generating bot statistics...")
             stats = bot_service.get_statistics()
             
             # Add recent detections
@@ -374,7 +478,7 @@ class BotStatisticsView(View):
             return JsonResponse(stats)
             
         except Exception as e:
-            print(f"Statistics error: {e}")
+            print(f"❌ Statistics error: {e}")
             return JsonResponse({'error': 'Failed to get statistics', 'details': str(e)}, status=500)
 
 class BlacklistManagementView(View):
@@ -422,7 +526,7 @@ class BlacklistManagementView(View):
             })
             
         except Exception as e:
-            print(f"Blacklist get error: {e}")
+            print(f"❌ Blacklist get error: {e}")
             return JsonResponse({'error': 'Failed to get blacklist', 'details': str(e)}, status=500)
     
     @method_decorator(csrf_exempt)
@@ -464,7 +568,7 @@ class BlacklistManagementView(View):
                     details={'admin_action': True}
                 )
                 
-                print(f"Removed {ip_address} from blacklist")
+                print(f"✅ Removed {ip_address} from blacklist")
                 return JsonResponse({'status': 'removed', 'ip': ip_address})
             else:
                 return JsonResponse({'error': 'IP not found in blacklist'}, status=404)
@@ -472,7 +576,7 @@ class BlacklistManagementView(View):
         except json.JSONDecodeError:
             return JsonResponse({'error': 'Invalid JSON'}, status=400)
         except Exception as e:
-            print(f"Blacklist delete error: {e}")
+            print(f"❌ Blacklist delete error: {e}")
             return JsonResponse({'error': 'Failed to remove IP', 'details': str(e)}, status=500)
 
 class RetrainModelView(View):
@@ -491,32 +595,34 @@ class RetrainModelView(View):
             if not auth_header == f'Bearer {api_key}':
                 return JsonResponse({'error': 'Authentication required'}, status=401)
             
-            print("Starting model retraining...")
-            success = bot_service.retrain_model()
+            print("🔄 Starting model retraining...")
+            result = bot_service.retrain_model()
             
-            if success:
+            if result.get('success', False):
                 SecurityLog.log_event(
                     event_type='model_retrained',
                     ip_address=get_client_ip(request),
                     description='ML model retrained via admin API',
                     severity='low',
-                    details={'admin_action': True}
+                    details={'admin_action': True, 'result': result}
                 )
                 
-                print("Model retraining completed successfully")
+                print("✅ Model retraining completed successfully")
                 return JsonResponse({
                     'status': 'success',
-                    'message': 'Model retrained successfully'
+                    'message': 'Model retrained successfully',
+                    'details': result
                 })
             else:
-                print("Model retraining failed")
+                print("❌ Model retraining failed")
                 return JsonResponse({
                     'status': 'error',
-                    'message': 'Failed to retrain model'
+                    'message': 'Failed to retrain model',
+                    'details': result
                 }, status=500)
                 
         except Exception as e:
-            print(f"Model retrain error: {e}")
+            print(f"❌ Model retrain error: {e}")
             return JsonResponse({'error': 'Retrain failed', 'details': str(e)}, status=500)
 
 @require_http_methods(["GET"])
@@ -528,7 +634,7 @@ def health_check(request):
         try:
             BotDetection.objects.count()
         except Exception as e:
-            print(f"Database health check failed: {e}")
+            print(f"❌ Database health check failed: {e}")
             db_healthy = False
         
         # Test cache
@@ -537,7 +643,7 @@ def health_check(request):
             cache.set('health_check', 'ok', 10)
             cache_healthy = cache.get('health_check') == 'ok'
         except Exception as e:
-            print(f"Cache health check failed: {e}")
+            print(f"❌ Cache health check failed: {e}")
             cache_healthy = False
         
         status = 'healthy' if db_healthy and cache_healthy else 'degraded'
@@ -545,14 +651,15 @@ def health_check(request):
         return JsonResponse({
             'status': status,
             'timestamp': timezone.now().isoformat(),
-            'version': '1.0.0',
+            'version': '2.0.0',
+            'service': 'enhanced-dogify-bot-detection',
             'database': 'healthy' if db_healthy else 'unhealthy',
             'cache': 'healthy' if cache_healthy else 'unhealthy',
             'bot_service': 'available' if bot_service else 'unavailable'
         }, status=200 if status == 'healthy' else 503)
         
     except Exception as e:
-        print(f"Health check error: {e}")
+        print(f"❌ Health check error: {e}")
         return JsonResponse({
             'status': 'error',
             'error': str(e),
@@ -572,7 +679,7 @@ def webhook_threat_intel(request):
             # Add signature verification logic
         
         data = json.loads(request.body)
-        print(f"Received threat intelligence update: {len(data.get('threats', []))} threats")
+        print(f"📡 Received threat intelligence update: {len(data.get('threats', []))} threats")
         
         # Process threat intelligence data
         processed_count = 0
@@ -592,12 +699,12 @@ def webhook_threat_intel(request):
                 )
                 processed_count += 1
                 if created:
-                    print(f"Added new threat intel for {threat['ip']}")
+                    print(f"➕ Added new threat intel for {threat['ip']}")
                 else:
-                    print(f"Updated threat intel for {threat['ip']}")
+                    print(f"🔄 Updated threat intel for {threat['ip']}")
                     
             except Exception as e:
-                print(f"Failed to process threat {threat}: {e}")
+                print(f"❌ Failed to process threat {threat}: {e}")
         
         return JsonResponse({
             'status': 'processed', 
@@ -606,5 +713,5 @@ def webhook_threat_intel(request):
         })
         
     except Exception as e:
-        print(f"Threat intel webhook error: {e}")
+        print(f"❌ Threat intel webhook error: {e}")
         return JsonResponse({'error': 'Processing failed', 'details': str(e)}, status=500)
