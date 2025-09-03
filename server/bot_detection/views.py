@@ -13,12 +13,12 @@ from django.utils import timezone
 import hashlib
 import traceback
 
-from .bot_detection_service import BotDetectionService
+from .bot_detection_service import AdvancedBotDetectionService
 from .models import BotDetection, IPBlacklist, SecurityLog, BehavioralPattern
 from .middleware import get_client_ip
 
 # Initialize bot detection service
-bot_service = BotDetectionService()
+bot_service = AdvancedBotDetectionService()
 
 class BotDetectionView(View):
     """Main bot detection endpoint"""

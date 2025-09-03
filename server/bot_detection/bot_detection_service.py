@@ -104,6 +104,251 @@ class AdvancedBotDetectionService:
         # Initialize GeoIP
         self.geoip_reader = self._initialize_geoip()
     
+    def retrain_model(self, use_recent_data: bool = True, days_back: int = 30) -> Dict:
+        """
+        Retrain ML models using recent detection data
+        
+        Args:
+            use_recent_data: Whether to use recent detection data for training
+            days_back: How many days back to look for training data
+        
+        Returns:
+            Dict containing training results and success status
+        """
+        try:
+            from sklearn.model_selection import train_test_split
+            from sklearn.metrics import classification_report, accuracy_score
+            
+            # Collect training data
+            training_data = []
+            labels = []
+            processed_count = 0  # Initialize the counter
+            
+            if use_recent_data and days_back > 0:
+                # Get recent detection data
+                cutoff_date = timezone.now() - timedelta(days=days_back)
+                recent_detections = BotDetection.objects.filter(
+                    timestamp__gte=cutoff_date,
+                    confidence_score__gte=0.7  # Only high-confidence detections
+                ).order_by('-timestamp')[:1000]  # Limit to prevent memory issues
+                
+                for detection in recent_detections:
+                    # Reconstruct request data for feature extraction
+                    request_data = {
+                        'ip_address': detection.ip_address,
+                        'user_agent': detection.user_agent,
+                        'headers': detection.get_headers(),
+                        'behavioral_data': detection.get_behavioral_data(),
+                        'fingerprint': detection.fingerprint
+                    }
+                    
+                    # Extract features using existing method
+                    features = self._extract_advanced_features(request_data, {})
+                    training_data.append(features)
+                    labels.append(1 if detection.is_bot else 0)
+                    processed_count += 1  # Increment the counter
+            
+            # If not enough real data, supplement with synthetic data
+            if len(training_data) < 50:
+                synthetic_normal = self._generate_synthetic_training_data()
+                synthetic_bot = self._generate_synthetic_bot_data()
+                
+                training_data.extend(synthetic_normal)
+                labels.extend([0] * len(synthetic_normal))
+                
+                training_data.extend(synthetic_bot)
+                labels.extend([1] * len(synthetic_bot))
+            
+            if len(training_data) < 10:
+                return {
+                    'success': False,
+                    'error': 'Insufficient training data',
+                    'samples': len(training_data)
+                }
+            
+            # Prepare data
+            X = np.array(training_data)
+            y = np.array(labels)
+            
+            # Scale features
+            if self.scaler:
+                X_scaled = self.scaler.fit_transform(X)
+            else:
+                self.scaler = StandardScaler()
+                X_scaled = self.scaler.fit_transform(X)
+            
+            # Split data for validation
+            if len(X) > 20:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X_scaled, y, test_size=0.2, random_state=42, stratify=y
+                )
+            else:
+                X_train, X_test, y_train, y_test = X_scaled, X_scaled, y, y
+            
+            # Retrain models
+            results = {}
+            
+            # 1. Retrain Isolation Forest
+            try:
+                iso_forest = IsolationForest(
+                    contamination=0.1,
+                    random_state=42,
+                    n_estimators=100
+                )
+                iso_forest.fit(X_train)
+                
+                # Test performance
+                iso_pred = iso_forest.predict(X_test)
+                iso_pred_binary = [0 if p == 1 else 1 for p in iso_pred]  # Convert to binary
+                
+                results['isolation_forest'] = {
+                    'accuracy': accuracy_score(y_test, iso_pred_binary),
+                    'trained': True
+                }
+                
+                self.ensemble_models['isolation_forest'] = iso_forest
+                
+            except Exception as e:
+                results['isolation_forest'] = {'error': str(e), 'trained': False}
+            
+            # 2. Retrain Random Forest (if we have labels)
+            if len(set(y)) > 1:  # We have both classes
+                try:
+                    from sklearn.ensemble import RandomForestClassifier
+                    
+                    rf_model = RandomForestClassifier(
+                        n_estimators=50,
+                        random_state=42,
+                        max_depth=10
+                    )
+                    rf_model.fit(X_train, y_train)
+                    
+                    # Test performance
+                    rf_pred = rf_model.predict(X_test)
+                    
+                    results['random_forest'] = {
+                        'accuracy': accuracy_score(y_test, rf_pred),
+                        'trained': True
+                    }
+                    
+                    self.ensemble_models['random_forest'] = rf_model
+                    
+                except Exception as e:
+                    results['random_forest'] = {'error': str(e), 'trained': False}
+            
+            # 3. Retrain SVM
+            try:
+                from sklearn.svm import OneClassSVM
+                
+                svm_model = OneClassSVM(gamma='scale', nu=0.1)
+                svm_model.fit(X_train)
+                
+                # Test performance
+                svm_pred = svm_model.predict(X_test)
+                svm_pred_binary = [0 if p == 1 else 1 for p in svm_pred]
+                
+                results['svm'] = {
+                    'accuracy': accuracy_score(y_test, svm_pred_binary),
+                    'trained': True
+                }
+                
+                self.ensemble_models['svm'] = svm_model
+                
+            except Exception as e:
+                results['svm'] = {'error': str(e), 'trained': False}
+            
+            # Save models
+            models_dir = os.path.join(settings.BASE_DIR, 'ml_models')
+            os.makedirs(models_dir, exist_ok=True)
+            
+            saved_models = []
+            for model_name, model in self.ensemble_models.items():
+                try:
+                    model_path = os.path.join(models_dir, f'bot_detector_{model_name}.joblib')
+                    joblib.dump(model, model_path)
+                    saved_models.append(model_name)
+                except Exception as e:
+                    results[f'{model_name}_save_error'] = str(e)
+            
+            # Save scaler
+            try:
+                scaler_path = os.path.join(models_dir, 'feature_scaler.joblib')
+                joblib.dump(self.scaler, scaler_path)
+                saved_models.append('scaler')
+            except Exception as e:
+                results['scaler_save_error'] = str(e)
+            
+            # Log retraining event
+            SecurityLog.log_event(
+                event_type='model_retrained',
+                ip_address='system',
+                description=f'ML models retrained with {len(training_data)} samples',
+                severity='info',
+                details={
+                    'samples_used': len(training_data),
+                    'models_trained': list(results.keys()),
+                    'saved_models': saved_models,
+                    'training_accuracy': {k: v.get('accuracy') for k, v in results.items() if 'accuracy' in v}
+                }
+            )
+            
+            return {
+                'success': True,
+                'models_trained': len([r for r in results.values() if r.get('trained', False)]),
+                'total_samples': len(training_data),
+                'real_samples': processed_count,  # Now properly defined
+                'synthetic_samples': len(training_data) - processed_count,
+                'results': results,
+                'saved_models': saved_models
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'models_trained': 0
+            }
+
+    def _generate_synthetic_bot_data(self) -> List[List[float]]:
+        """Generate synthetic bot training data"""
+        bot_data = []
+        
+        # Generate various bot patterns
+        for _ in range(30):
+            features = [
+                np.random.normal(40, 15),   # Shorter UA length
+                np.random.normal(6, 2),     # Fewer UA words
+                np.random.normal(6, 2),     # More slashes (API calls)
+                np.random.normal(1, 0.5),   # Fewer parentheses
+                np.random.choice([0, 1]),   # May not have Mozilla
+                np.random.choice([0, 1]),   # May not have Chrome
+                0, 0,  # Usually missing Safari/Firefox
+                np.random.normal(4, 1),     # Fewer headers
+                np.random.choice([0, 1]),   # Missing essential headers
+                np.random.choice([0, 1]),
+                np.random.choice([0, 1]),
+                np.random.choice([0, 1]),
+                0.9, 6,  # High detection confidence
+                0.8, 5,
+                0.7, 4,
+                0.6, 3,
+                0.5, 2,
+                0,  # No mouse movements
+                0,  # No entropy
+                0,  # No keyboard events
+                np.random.normal(1000, 300), # Very short time
+                0,  # No clicks
+                0,  # No scrolling
+            ]
+            
+            # Pad to 50 features
+            while len(features) < 50:
+                features.append(np.random.normal(0, 0.1))
+            
+            bot_data.append(features[:50])
+        
+        return bot_data
+
     def detect_bot(self, request_data: Dict) -> Dict:
         """
         Ultra-advanced bot detection with multiple layers
