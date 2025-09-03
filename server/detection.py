@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FINAL Bot Detection Test - Server-side routing through Django
-SUCCESS = Bots blocked at Django, Humans redirected to 5173
+SUCCESS = Bots redirected to 3000, Humans redirected to 3001
 """
 
 import requests
@@ -14,55 +14,49 @@ def test_django_routing():
     print("=" * 50)
     print("Flow: All traffic → Django (8000) → Bot detection → Route accordingly")
     
-    # Test 1: Facebook Bot → Should be blocked by Django
+    # Test 1: Facebook Bot → Should be redirected to 3000
     print("\n1. Testing Facebook Bot...")
     try:
         bot_response = requests.get(
-            "http://localhost:8000",  # ← Hit Django directly
+            "http://localhost:8000",
             headers={"User-Agent": "facebookexternalhit/1.1"},
-            allow_redirects=False,
+            allow_redirects=True,
             timeout=10
         )
         
         print(f"   Status: {bot_response.status_code}")
-        print(f"   URL: {bot_response.url}")
+        print(f"   Final URL: {bot_response.url}")
         
-        # Success = blocked (403) or served security page
-        bot_blocked = (
-            bot_response.status_code == 403 or
-            "security" in bot_response.text.lower() or
-            "restricted" in bot_response.text.lower()
-        )
+        bot_redirected = ":3000" in bot_response.url
         
-        print(f"   Bot blocked: {'✅ YES' if bot_blocked else '❌ NO'}")
+        print(f"   Bot redirected to 3000: {'✅ YES' if bot_redirected else '❌ NO'}")
         
-        if bot_blocked:
-            print(f"   ✅ Bot saw security page instead of main site")
+        if bot_redirected:
+            print(f"   ✅ Bot was routed correctly to bot-specific port (3000)")
         
     except Exception as e:
         print(f"   ❌ Bot test failed: {e}")
-        bot_blocked = False
+        bot_redirected = False
     
-    # Test 2: Normal Browser → Should be redirected to main site
+    # Test 2: Normal Browser → Should be redirected to main site at port 3001
     print("\n2. Testing Normal Browser...")
     try:
         human_response = requests.get(
-            "http://localhost:8000",  # ← Hit Django directly  
+            "http://localhost:8000",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124"},
-            allow_redirects=True,   # Follow redirect to 5173
+            allow_redirects=True,
             timeout=10
         )
         
         print(f"   Status: {human_response.status_code}")
         print(f"   Final URL: {human_response.url}")
         
-        # Success = redirected to port 5173
-        human_redirected = ":5173" in human_response.url
+        human_redirected = ":3001" in human_response.url
         
-        print(f"   Human redirected: {'✅ YES' if human_redirected else '❌ NO'}")
+        print(f"   Human redirected to 3001: {'✅ YES' if human_redirected else '❌ NO'}")
         
         if human_redirected:
-            print(f"   ✅ Human reached main site at port 5173")
+            print(f"   ✅ Human reached main site at port 3001")
         
     except Exception as e:
         print(f"   ❌ Human test failed: {e}")
@@ -83,12 +77,12 @@ def test_django_routing():
             response = requests.get(
                 "http://localhost:8000",
                 headers={"User-Agent": bot_ua},
-                allow_redirects=False,
+                allow_redirects=True,
                 timeout=5
             )
             
-            detected = response.status_code == 403 or "security" in response.text.lower()
-            print(f"   {bot_name}: {'✅ BLOCKED' if detected else '❌ MISSED'}")
+            detected = ":3000" in response.url or "security" in response.text.lower()
+            print(f"   {bot_name}: {'✅ Redirected to 3000 or blocked' if detected else '❌ MISSED'}")
             
             if detected:
                 bot_detection_count += 1
@@ -96,26 +90,25 @@ def test_django_routing():
         except Exception as e:
             print(f"   {bot_name}: ❌ Error - {e}")
     
-    other_bots_blocked = bot_detection_count >= len(other_bots) // 2  # At least half should be blocked
+    other_bots_blocked = bot_detection_count >= len(other_bots) // 2
     
-    # Overall success
-    overall_success = bot_blocked and human_redirected and other_bots_blocked
+    overall_success = bot_redirected and human_redirected and other_bots_blocked
     
     print(f"\n{'🎉 SUCCESS!' if overall_success else '❌ ISSUES FOUND!'}")
     
     if overall_success:
         print("✅ Django traffic routing working correctly!")
-        print("✅ Bots are blocked with security page")
-        print("✅ Humans are redirected to main site")
-        print("✅ Multiple bot types detected")
+        print("✅ Bots are redirected to port 3000")
+        print("✅ Humans are redirected to main site on port 3001")
+        print("✅ Multiple bot types detected and routed")
     else:
         print("❌ Issues:")
-        if not bot_blocked:
-            print("   • Facebook bot not blocked")
+        if not bot_redirected:
+            print("   • Facebook bot not redirected to port 3000")
         if not human_redirected:
-            print("   • Humans not redirected to port 5173")
+            print("   • Humans not redirected to port 3001")
         if not other_bots_blocked:
-            print("   • Some bots are getting through")
+            print("   • Some bots are getting through unfiltered")
     
     return overall_success
 
@@ -123,11 +116,10 @@ def test_old_direct_access():
     """Test that old direct access still works as fallback"""
     print(f"\n🔄 Testing Direct Access (Fallback)...")
     
-    # Test if someone goes directly to 5173 (bypassing Django)
     try:
-        direct_response = requests.get("http://localhost:5173", timeout=5)
+        direct_response = requests.get("http://localhost:3001", timeout=5)
         direct_works = direct_response.status_code == 200
-        print(f"   Direct access to 5173: {'✅ Works' if direct_works else '❌ Blocked'}")
+        print(f"   Direct access to 3001: {'✅ Works' if direct_works else '❌ Blocked'}")
         return direct_works
     except Exception as e:
         print(f"   Direct access failed: {e}")
@@ -137,7 +129,6 @@ if __name__ == "__main__":
     print("🚀 Final Bot Detection Test")
     print("Testing server-side bot detection with Django routing")
     
-    # Check Django is running
     try:
         health_check = requests.get("http://localhost:8000/api/bot-detection/health/", timeout=5)
         django_running = health_check.status_code == 200
@@ -147,10 +138,7 @@ if __name__ == "__main__":
         print("   Start with: python manage.py runserver 8000")
         exit(1)
     
-    # Run main test
     main_success = test_django_routing()
-    
-    # Test fallback
     fallback_works = test_old_direct_access()
     
     print(f"\n{'🎉 SYSTEM WORKING!' if main_success else '❌ NEEDS FIXES!'}")
@@ -158,13 +146,13 @@ if __name__ == "__main__":
     if main_success:
         print("\n🔧 New Traffic Flow:")
         print("1. All traffic goes to Django (port 8000)")
-        print("2. Django detects bots server-side (before JavaScript)")  
-        print("3. Bots → Security page (403)")
-        print("4. Humans → Redirected to main site (port 5173)")
-        print("5. ✅ Real bots (Facebook, Google) are now blocked!")
+        print("2. Django detects bots server-side")
+        print("3. Bots → Redirected to port 3000")
+        print("4. Humans → Redirected to main site (port 3001)")
+        print("5. ✅ Real bots are now properly handled!")
     else:
         print("\n🔧 Debugging:")
         print("1. Make sure you added the TrafficRoutingMiddleware")
         print("2. Restart Django server after adding middleware")
         print("3. Check Django logs for any errors")
-        print("4. Verify the middleware file was created correctly")
+        print("4. Verify the middleware routing logic (3000 for bots, 3001 for humans)")

