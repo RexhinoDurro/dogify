@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, Filter, Dog } from 'lucide-react';
 import ProductCard from '../components/ProductCard';
-import { products, categories, getProductsByCategory, searchProducts } from '../data/products';
+import { products, categories, searchProducts } from '../data/products';
 
 const Shop: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();

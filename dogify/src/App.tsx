@@ -62,7 +62,6 @@ const BotContent: React.FC<BotContentProps> = ({ detectionResult, behaviorMetric
     );
 
   const backendBlocked = detectionResult.backendResult?.blocked || false;
-  const showDogWebsite = detectionResult.showDogWebsite || isFacebookBot;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-800 via-purple-800 to-indigo-900">
@@ -307,7 +306,7 @@ const App: React.FC = () => {
   const [showBot, setShowBot] = useState<boolean>(false);
   const [showDogWebsite, setShowDogWebsite] = useState<boolean>(false);
   const [debugMode, setDebugMode] = useState<boolean>(false);
-  const [analysisComplete, setAnalysisComplete] = useState<boolean>(false);
+  const [, setAnalysisComplete] = useState<boolean>(false);
   
   const { detectionResult, behaviorMetrics } = useEnhancedBotDetectionWithBackend();
 
