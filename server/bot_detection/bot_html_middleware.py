@@ -625,34 +625,6 @@ class EnhancedBotHTMLMiddleware:
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Dogify - Premium Dog Food & Nutrition</title>
             <meta name="description" content="Premium nutrition for your furry friends. Shop high-quality dog food, treats, and wellness products.">
-        </head>
-        <body data-testid="bot-content-loaded">
-            <h1>🐕 Dogify</h1>
-            <p>Premium nutrition for your furry family members.</p>
-            <nav>
-                <a href="/">Home</a> |
-                <a href="/shop">Shop</a> |
-                <a href="/about">About</a> |
-                <a href="/contact">Contact</a>
-            </nav>
-        </body>
-        </html>
-        """
-        
-        template = Template(html)
-        context = Context({'request': request})
-        return HttpResponse(template.render(context))
-    
-    def _generate_default_html(self, request):
-        """Generate default HTML for unknown routes"""
-        html = """
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Dogify - Premium Dog Food & Nutrition</title>
-            <meta name="description" content="Premium nutrition for your furry friends. Shop high-quality dog food, treats, and wellness products.">
             <style>
                 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; }
                 .container { max-width: 800px; margin: 0 auto; padding: 40px 20px; text-align: center; }
@@ -708,6 +680,8 @@ class EnhancedBotHTMLMiddleware:
         template = Template(html)
         context = Context({'request': request})
         return HttpResponse(template.render(context))
+    def _generate_default_header(self, request):
+        html = """
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1256,3 +1230,5 @@ class EnhancedBotHTMLMiddleware:
         html = f"""
         <!DOCTYPE html>
         <html lang="en">
+        """
+        
