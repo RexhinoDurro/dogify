@@ -1,5 +1,4 @@
-// dogify/src/hooks/useEnhancedBotDetectionWithBackend.ts
-// Enhanced bot detection hook with seamless backend integration
+// Complete useEnhancedBotDetectionWithBackend.ts - Fixed version
 import { useEffect, useState, useRef } from 'react';
 
 // Type definitions
@@ -135,6 +134,7 @@ const useEnhancedBotDetectionWithBackend = () => {
     // Script tools
     { pattern: /curl|wget/i, weight: 0.95, category: 'command_line_tool' },
     { pattern: /python-requests|python-urllib/i, weight: 0.94, category: 'python_script' },
+    { pattern: /node.*fetch|axios/i, weight: 0.90, category: 'nodejs_script' },
     
     // Generic bot patterns
     { pattern: /\bbot\b|crawler|spider|scraper/i, weight: 0.85, category: 'generic_bot' }
@@ -144,8 +144,8 @@ const useEnhancedBotDetectionWithBackend = () => {
   const analyzeFacebookBotUA = (userAgent: string): DetectionAnalysis => {
     if (!userAgent) {
       return { 
-        isBot: true, 
-        confidence: 0.9, 
+        isBot: false, // Changed: Don't assume bot for missing UA
+        confidence: 0.3, // Reduced penalty
         reasons: ['missing_user_agent'],
         isFacebookBot: false
       };
@@ -193,21 +193,27 @@ const useEnhancedBotDetectionWithBackend = () => {
       }
     }
 
-    // Length analysis
+    // Length analysis (more lenient)
     const uaLength = userAgent.length;
-    if (uaLength < 30) {
-      reasons.push('extremely_short_ua');
-      confidence = Math.max(confidence, 0.80);
+    if (uaLength < 20) {
+      reasons.push('very_short_ua');
+      confidence = Math.max(confidence, 0.6); // Reduced from 0.8
     }
 
-    // Missing browser version patterns
+    // Browser version analysis (more lenient)
     if (!userAgent.match(/Chrome\/[\d.]+|Firefox\/[\d.]+|Safari\/[\d.]+/)) {
-      reasons.push('missing_browser_version');
-      confidence = Math.max(confidence, 0.60);
+      // Check if it has other browser indicators
+      const browserIndicators = ['Mozilla', 'WebKit', 'Gecko', 'Edge', 'Opera'];
+      const hasBrowserIndicator = browserIndicators.some(indicator => userAgent.includes(indicator));
+      
+      if (!hasBrowserIndicator) {
+        reasons.push('missing_browser_indicators');
+        confidence = Math.max(confidence, 0.4); // Reduced penalty
+      }
     }
 
     return { 
-      isBot: confidence > 0.6, 
+      isBot: confidence > 0.7, // Increased threshold from 0.6 to 0.7
       confidence, 
       reasons,
       isFacebookBot
@@ -248,7 +254,7 @@ const useEnhancedBotDetectionWithBackend = () => {
         ctx.fillRect(125, 1, 62, 20);
         ctx.fillStyle = '#069';
         ctx.font = '11pt Arial';
-        ctx.fillText('🤖 Facebook Bot Detection 2024 🔍', 2, 15);
+        ctx.fillText('🤖 Bot Detection Test 2024 🔍', 2, 15);
         
         // Add more complex patterns
         ctx.beginPath();
@@ -291,7 +297,7 @@ const useEnhancedBotDetectionWithBackend = () => {
           components.push('webgl:unavailable');
           setBehaviorMetrics(prev => ({ ...prev, webglSupport: false }));
         }
-      } catch (e) {
+      } catch {
         components.push('webgl:error');
         setBehaviorMetrics(prev => ({ ...prev, webglSupport: false }));
       }
@@ -318,17 +324,13 @@ const useEnhancedBotDetectionWithBackend = () => {
     fingerprint: string;
     isFacebookBot?: boolean;
   }): Promise<void> => {
-    if (backendCommunicated.current) {
-      return; // Already communicated
-    }
+    if (backendCommunicated.current) return;
 
     try {
-      console.log('🔍 Communicating with Django backend...', {
-        confidence: localResult.confidence,
-        methods: localResult.methods.length,
-        isBot: localResult.isBot,
-        isFacebookBot: localResult.isFacebookBot
-      });
+      console.log('🔍 Communicating with Django backend...');
+      
+      // Use relative URL for nginx proxy setup
+      const backendUrl = '/api/bot-detection/detect/';
       
       const requestData = {
         user_agent: navigator.userAgent,
@@ -343,13 +345,13 @@ const useEnhancedBotDetectionWithBackend = () => {
         is_facebook_bot: localResult.isFacebookBot || false,
       };
 
-      const response = await fetch('/api/bot-detection/detect/', {
+      const response = await fetch(backendUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
+          'User-Agent': navigator.userAgent, // Include user agent in headers
         },
-        credentials: 'include',
         body: JSON.stringify(requestData)
       });
 
@@ -357,7 +359,7 @@ const useEnhancedBotDetectionWithBackend = () => {
       backendCommunicated.current = true;
 
       if (response.status === 403) {
-        // Backend blocked the request
+        // Backend blocked the request - but check why
         console.log('🚫 Backend blocked the request');
         let errorData: any = {};
         try {
@@ -367,18 +369,22 @@ const useEnhancedBotDetectionWithBackend = () => {
           console.log('🚫 Could not parse block reason');
         }
         
+        // Only treat as bot if the backend explicitly says it's a bot
+        const backendSaysBot = errorData.is_bot === true || errorData.blocked === true;
+        
         setDetectionResult(prev => ({
           ...prev,
           backendVerified: true,
           backendResult: { 
             status: 'blocked',
-            is_bot: true,
+            is_bot: backendSaysBot,
             blocked: true, 
-            confidence: 0.95,
+            confidence: backendSaysBot ? 0.95 : 0.3, // Lower confidence if not explicitly a bot
             ...errorData
           },
-          shouldBlock: true,
-          confidence: Math.max(prev.confidence, 0.95)
+          shouldBlock: backendSaysBot,
+          confidence: backendSaysBot ? Math.max(prev.confidence, 0.95) : Math.max(prev.confidence, 0.3),
+          isBot: backendSaysBot || prev.isBot
         }));
         return;
       }
@@ -387,25 +393,25 @@ const useEnhancedBotDetectionWithBackend = () => {
         const result: BackendResult = await response.json();
         console.log('✅ Backend verification result:', result);
         
-        // Update detection result with backend data
         setDetectionResult(prev => ({
           ...prev,
           backendVerified: true,
           backendResult: result,
-          shouldBlock: result.blocked || (result.is_bot && result.confidence >= 0.7),
+          shouldBlock: result.blocked || false,
           confidence: Math.max(prev.confidence, result.confidence || 0),
           isBot: prev.isBot || result.is_bot,
           isFacebookBot: prev.isFacebookBot || result.is_facebook_bot,
           showDogWebsite: result.show_dog_website
         }));
       } else {
-        console.warn('⚠️ Backend verification failed:', response.status, response.statusText);
+        console.warn('⚠️ Backend verification failed:', response.status);
+        // Don't mark as bot just because backend failed - this is critical!
         setDetectionResult(prev => ({
           ...prev,
           backendVerified: false,
           backendResult: { 
             status: 'error',
-            is_bot: false,
+            is_bot: false, // Important: don't assume bot on error
             blocked: false,
             confidence: 0,
             error: `HTTP ${response.status}` 
@@ -415,22 +421,27 @@ const useEnhancedBotDetectionWithBackend = () => {
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error('❌ Backend communication error:', errorMessage);
+      console.error('❌ Backend communication error (this is OK for humans):', errorMessage);
+      
+      // Don't mark as bot due to backend failure - this is critical!
       setDetectionResult(prev => ({
         ...prev,
         backendVerified: false,
         backendResult: { 
           status: 'error',
-          is_bot: false,
+          is_bot: false, // Important: don't assume bot on error
           blocked: false,
           confidence: 0,
           error: errorMessage 
-        }
+        },
+        // Keep original detection result, don't make it worse
+        isBot: prev.confidence > 0.8 ? prev.isBot : false,
+        confidence: prev.confidence > 0.8 ? prev.confidence : Math.max(prev.confidence * 0.5, 0.1)
       }));
     }
   };
 
-  // Main detection function with backend integration
+  // Main detection function with more lenient human detection
   const runEnhancedDetection = async (): Promise<DetectionResult> => {
     try {
       const userAgent = navigator.userAgent;
@@ -441,7 +452,7 @@ const useEnhancedBotDetectionWithBackend = () => {
       // Run local detection first
       const uaAnalysis = analyzeFacebookBotUA(userAgent);
       
-      // Simple environment checks
+      // Simple environment checks (more lenient)
       const hasWebdriver = !!(window.navigator as any)?.webdriver;
       const hasPhantom = !!(window as any).callPhantom || !!(window as any)._phantom;
       const envConfidence = hasWebdriver ? 0.95 : hasPhantom ? 0.90 : 0;
@@ -449,12 +460,12 @@ const useEnhancedBotDetectionWithBackend = () => {
       if (hasWebdriver) envMethods.push('webdriver_detected');
       if (hasPhantom) envMethods.push('phantom_detected');
 
-      // Calculate local confidence
+      // Calculate local confidence (much more lenient)
       const localConfidence = Math.max(uaAnalysis.confidence, envConfidence);
       const allMethods = [...uaAnalysis.reasons, ...envMethods];
 
       const localResult = {
-        isBot: localConfidence >= 0.6 || uaAnalysis.isFacebookBot || false,
+        isBot: localConfidence >= 0.8 || uaAnalysis.isFacebookBot || false, // Increased threshold
         confidence: localConfidence,
         methods: allMethods,
         fingerprint,
@@ -477,100 +488,132 @@ const useEnhancedBotDetectionWithBackend = () => {
         detectionMethods: allMethods,
         backendVerified: false,
         backendResult: null,
-        shouldBlock: localResult.isBot && localResult.confidence >= 0.8
+        shouldBlock: false // Don't block based on local detection alone for most cases
       };
 
       setDetectionResult(newDetectionResult);
 
-      // Communicate with backend asynchronously
-      await communicateWithBackend(localResult);
+      // Communicate with backend asynchronously (non-blocking for humans)
+      try {
+        await communicateWithBackend(localResult);
+      } catch (backendError) {
+        console.log('Backend communication failed, continuing with local detection');
+        // Don't fail the whole process if backend is down
+      }
 
       return newDetectionResult;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error('❌ Detection error:', errorMessage);
-      return detectionResult; // Return current state on error
+      
+      // On error, assume human to avoid false positives
+      const safeResult: DetectionResult = {
+        isBot: false,
+        confidence: 0,
+        detectionMethods: ['detection_error'],
+        fingerprint: '',
+        riskLevel: 'low',
+        backendVerified: false,
+        backendResult: null,
+        shouldBlock: false
+      };
+      
+      setDetectionResult(safeResult);
+      return safeResult;
     }
   };
 
-  // Enhanced behavior tracking
+  // Enhanced behavior tracking (less aggressive)
   useEffect(() => {
-    const mousePositions: Array<{x: number; y: number; time: number}> = [];
+    let mouseMovements = 0;
+    let keyboardEvents = 0;
+    let scrollEvents = 0;
+    let touchEvents = 0;
+    let focusEvents = 0;
+    const clickTimings: number[] = [];
+    const mouseVelocities: number[] = [];
     let lastMouseTime = 0;
+    let lastMousePos = { x: 0, y: 0 };
     
     const handleMouseMove = (e: MouseEvent) => {
       const now = Date.now();
-      mousePositions.push({ x: e.clientX, y: e.clientY, time: now });
-      if (mousePositions.length > 100) mousePositions.shift();
+      mouseMovements++;
       
-      // Calculate velocity if we have previous position
+      // Calculate velocity if we have previous data
       if (lastMouseTime > 0) {
         const timeDiff = now - lastMouseTime;
         if (timeDiff > 0) {
-          const prevPos = mousePositions[mousePositions.length - 2];
-          if (prevPos) {
-            const velocity = Math.sqrt(
-              Math.pow(e.clientX - prevPos.x, 2) +
-              Math.pow(e.clientY - prevPos.y, 2)
-            ) / timeDiff;
-            
-            setBehaviorMetrics(prev => ({
-              ...prev,
-              mouseVelocity: [...prev.mouseVelocity.slice(-19), velocity]
-            }));
+          const distance = Math.sqrt(
+            Math.pow(e.clientX - lastMousePos.x, 2) +
+            Math.pow(e.clientY - lastMousePos.y, 2)
+          );
+          const velocity = distance / timeDiff;
+          mouseVelocities.push(velocity);
+          
+          // Keep only recent velocities
+          if (mouseVelocities.length > 50) {
+            mouseVelocities.shift();
           }
         }
       }
+      
       lastMouseTime = now;
+      lastMousePos = { x: e.clientX, y: e.clientY };
       
       setBehaviorMetrics(prev => ({
         ...prev,
-        mouseMovements: prev.mouseMovements + 1
+        mouseMovements: mouseMovements,
+        mouseVelocity: [...mouseVelocities]
       }));
     };
 
-    const handleClick = () => {
-      const now = Date.now();
-      setBehaviorMetrics(prev => {
-        const newClickTiming = [...prev.clickTiming, now];
-        const intervals: number[] = [];
-        for (let i = 1; i < newClickTiming.length; i++) {
-          intervals.push(newClickTiming[i] - newClickTiming[i - 1]);
-        }
-        return {
-          ...prev,
-          clickTiming: newClickTiming.slice(-20),
-          clickPatterns: intervals.slice(-15)
-        };
-      });
-    };
-
-    const handleKeyboard = () => {
+    const handleKeyboard = (_e: KeyboardEvent) => {
+      keyboardEvents++;
       setBehaviorMetrics(prev => ({
         ...prev,
-        keyboardEvents: prev.keyboardEvents + 1
+        keyboardEvents: keyboardEvents
       }));
     };
 
     const handleScroll = (e: WheelEvent) => {
+      scrollEvents++;
       setBehaviorMetrics(prev => ({
         ...prev,
-        scrollBehavior: prev.scrollBehavior + 1,
-        scrollDelta: [...prev.scrollDelta.slice(-19), e.deltaY || 0]
+        scrollBehavior: scrollEvents,
+        scrollDelta: [...prev.scrollDelta, e.deltaY || 0].slice(-20)
+      }));
+    };
+
+    const handleClick = (_e: MouseEvent) => {
+      const now = Date.now();
+      clickTimings.push(now);
+      
+      // Calculate click intervals
+      const intervals: number[] = [];
+      for (let i = 1; i < clickTimings.length; i++) {
+        intervals.push(clickTimings[i] - clickTimings[i - 1]);
+      }
+      
+      setBehaviorMetrics(prev => ({
+        ...prev,
+        clickTiming: [...clickTimings].slice(-20),
+        clickPatterns: intervals.slice(-15)
       }));
     };
 
     const handleTouch = () => {
+      touchEvents++;
       setBehaviorMetrics(prev => ({
         ...prev,
-        touchEvents: prev.touchEvents + 1
+        touchEvents: touchEvents
       }));
     };
 
     const handleFocus = () => {
+      focusEvents++;
       setBehaviorMetrics(prev => ({
         ...prev,
-        focusEvents: prev.focusEvents + 1
+        focusEvents: focusEvents
       }));
     };
 
@@ -588,57 +631,76 @@ const useEnhancedBotDetectionWithBackend = () => {
       }));
     };
 
-    // Add all event listeners
-    if (typeof window !== 'undefined') {
-      document.addEventListener('mousemove', handleMouseMove, { passive: true });
-      document.addEventListener('click', handleClick);
-      document.addEventListener('keydown', handleKeyboard);
-      document.addEventListener('wheel', handleScroll, { passive: true });
-      document.addEventListener('touchstart', handleTouch, { passive: true });
-      window.addEventListener('focus', handleFocus);
-      window.addEventListener('devicemotion', handleDeviceMotion);
-      window.addEventListener('orientationchange', handleOrientationChange);
+    // Add all event listeners with proper cleanup
+    document.addEventListener('mousemove', handleMouseMove, { passive: true });
+    document.addEventListener('keydown', handleKeyboard);
+    document.addEventListener('wheel', handleScroll, { passive: true });
+    document.addEventListener('click', handleClick);
+    document.addEventListener('touchstart', handleTouch, { passive: true });
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('devicemotion', handleDeviceMotion);
+    window.addEventListener('orientationchange', handleOrientationChange);
 
-      return () => {
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('click', handleClick);
-        document.removeEventListener('keydown', handleKeyboard);
-        document.removeEventListener('wheel', handleScroll);
-        document.removeEventListener('touchstart', handleTouch);
-        window.removeEventListener('focus', handleFocus);
-        window.removeEventListener('devicemotion', handleDeviceMotion);
-        window.removeEventListener('orientationchange', handleOrientationChange);
-      };
-    }
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('keydown', handleKeyboard);
+      document.removeEventListener('wheel', handleScroll);
+      document.removeEventListener('click', handleClick);
+      document.removeEventListener('touchstart', handleTouch);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('devicemotion', handleDeviceMotion);
+      window.removeEventListener('orientationchange', handleOrientationChange);
+    };
   }, []);
 
-  // Detection timing and lifecycle
+  // Detection timing and lifecycle (much more lenient)
   useEffect(() => {
-    // Quick initial detection for obvious bots
+    let detectionRun = false;
+    
+    // Quick detection for obvious bots only
     const quickDetection = setTimeout(async () => {
       const userAgent = navigator.userAgent.toLowerCase();
-      if (userAgent.includes('facebook') || userAgent.includes('facebot') || userAgent.includes('bot')) {
-        console.log('⚡ Quick bot detection triggered');
+      // Only trigger quick detection for very obvious bots
+      if (userAgent.includes('facebookexternalhit') || 
+          userAgent.includes('googlebot') || 
+          userAgent.includes('bingbot') ||
+          userAgent.startsWith('curl/') ||
+          userAgent.startsWith('wget/')) {
+        console.log('⚡ Quick bot detection for obvious bot');
+        detectionRun = true;
         await runEnhancedDetection();
       }
     }, 500);
 
-    // Full initial detection
-    const initialDetection = setTimeout(async () => {
-      console.log('🚀 Starting initial bot detection with backend...');
-      await runEnhancedDetection();
-    }, 1500);
+    // Main detection - give humans much more time
+    const mainDetection = setTimeout(async () => {
+      if (!detectionRun) {
+        console.log('🚀 Running main detection...');
+        detectionRun = true;
+        await runEnhancedDetection();
+      }
+    }, 3000); // Increased from 1.5s to 3s
 
     // Periodic re-detection (less frequent to avoid spam)
     detectionIntervalRef.current = window.setInterval(async () => {
-      if (!backendCommunicated.current) {
+      if (!backendCommunicated.current && !detectionRun) {
+        console.log('🔍 Running periodic detection check...');
         await runEnhancedDetection();
       }
-    }, 5000); // Every 5 seconds instead of 4
+    }, 8000); // Every 8 seconds instead of 5
+
+    // Final safety check
+    const finalCheck = setTimeout(async () => {
+      if (!detectionRun && !backendCommunicated.current) {
+        console.log('🔍 Running final safety detection check...');
+        await runEnhancedDetection();
+      }
+    }, 10000);
 
     return () => {
       clearTimeout(quickDetection);
-      clearTimeout(initialDetection);
+      clearTimeout(mainDetection);
+      clearTimeout(finalCheck);
       if (detectionIntervalRef.current) {
         window.clearInterval(detectionIntervalRef.current);
       }
