@@ -343,7 +343,7 @@ const useEnhancedBotDetectionWithBackend = () => {
         is_facebook_bot: localResult.isFacebookBot || false,
       };
 
-      const response = await fetch('http://localhost:8000/api/bot-detection/detect/', {
+      const response = await fetch('/api/bot-detection/detect/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
