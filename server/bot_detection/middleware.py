@@ -1,4 +1,4 @@
-# Fixed middleware.py - Much less aggressive bot detection
+# Fixed middleware.py - More effective bot detection
 import time
 import json
 from django.core.cache import cache
@@ -22,20 +22,35 @@ def get_client_ip(request):
     return ip
 
 class BotProtectionMiddleware:
-    """Much more lenient middleware - only blocks obvious bots"""
+    """Enhanced middleware with proper bot detection"""
     
     def __init__(self, get_response):
         self.get_response = get_response
-        self.rate_limit_requests = getattr(settings, 'RATE_LIMIT_REQUESTS_PER_MINUTE', 200)  # Increased
+        self.rate_limit_requests = getattr(settings, 'RATE_LIMIT_REQUESTS_PER_MINUTE', 100)  # More reasonable limit
         
-        # Only the most obvious bot patterns - very restrictive list
-        self.obvious_bot_patterns = [
+        # Enhanced bot patterns - more comprehensive
+        self.automation_patterns = [
             re.compile(r'curl|wget', re.I),  # Command line tools
-            re.compile(r'scrapy|mechanize', re.I),  # Scraping frameworks
             re.compile(r'python-requests|python-urllib', re.I),  # Python requests
+            re.compile(r'\bselenium\b|\bwebdriver\b', re.I),  # Selenium
+            re.compile(r'puppeteer|playwright', re.I),  # Browser automation
+            re.compile(r'scrapy|mechanize|beautifulsoup', re.I),  # Scraping frameworks
+            re.compile(r'bot.*test|test.*bot', re.I),  # Test bots
         ]
         
-        # Honeypot paths - only for obvious attack attempts
+        # Social media bots (legitimate but still bots)
+        self.social_bot_patterns = [
+            re.compile(r'facebookexternalhit|facebot|facebookcatalog', re.I),
+            re.compile(r'twitterbot|linkedinbot|googlebot|bingbot', re.I),
+        ]
+        
+        # Generic bot patterns
+        self.generic_bot_patterns = [
+            re.compile(r'\bbot\b|\bcrawler\b|\bspider\b|\bscraper\b', re.I),
+            re.compile(r'monitoring|check|scan', re.I),
+        ]
+        
+        # Honeypot paths
         self.honeypot_paths = [
             '/wp-admin/', '/wp-login.php', '/.env', '/config.php',
             '/phpmyadmin/', '/.git/', '/xmlrpc.php', '/admin.php'
@@ -46,29 +61,30 @@ class BotProtectionMiddleware:
         client_ip = get_client_ip(request)
         request.client_ip = client_ip
         
-        # Skip protection for most paths - only protect sensitive endpoints
+        # Skip protection for specific paths
         if self._should_skip_protection(request):
             return self.get_response(request)
         
-        # 1. IP Blacklist Check (only for previously confirmed bots)
+        # 1. IP Blacklist Check
         if self._is_ip_blacklisted(client_ip):
             return self._create_blocked_response('IP blacklisted', client_ip)
         
-        # 2. Very lenient rate limiting
+        # 2. Rate limiting - more reasonable
         if self._check_rate_limit(client_ip):
             return self._create_rate_limit_response()
         
-        # 3. Honeypot Check (only for obvious attack paths)
+        # 3. Honeypot Check
         if self._is_honeypot_access(request):
             self._handle_honeypot_trigger(client_ip, request)
             return self._create_blocked_response('Unauthorized access', client_ip)
         
-        # 4. ONLY block the most obvious bots (not browsers)
-        if self._is_obvious_bot(request):
-            self._add_to_blacklist(client_ip, 'Obvious bot pattern detected', 0.95, request)
-            return self._create_blocked_response('Bot detected', client_ip)
+        # 4. Enhanced bot detection
+        bot_detection = self._detect_bot(request)
+        if bot_detection['is_bot'] and bot_detection['should_block']:
+            self._add_to_blacklist(client_ip, bot_detection['reason'], bot_detection['confidence'], request)
+            return self._create_blocked_response(bot_detection['reason'], client_ip)
         
-        # 5. Log request pattern for analysis (non-blocking)
+        # 5. Log request pattern
         self._log_request_pattern(client_ip, request)
         
         response = self.get_response(request)
@@ -77,7 +93,7 @@ class BotProtectionMiddleware:
         return response
     
     def _should_skip_protection(self, request):
-        """Skip protection for most requests - be very permissive"""
+        """Skip protection for specific paths"""
         path = request.path.lower()
         
         # Skip for static files
@@ -99,20 +115,19 @@ class BotProtectionMiddleware:
         return False
         
     def _is_ip_blacklisted(self, ip_address):
-        """Check if IP is blacklisted (with caching)"""
+        """Check if IP is blacklisted"""
         return IPBlacklist.is_blacklisted(ip_address)
     
     def _check_rate_limit(self, ip_address):
-        """Very lenient rate limiting - only catch extreme abuse"""
+        """Rate limiting check"""
         cache_key = f"rate_limit_{ip_address}"
         current_requests = cache.get(cache_key, 0)
         
-        # Much higher threshold - 200 requests per minute
         if current_requests >= self.rate_limit_requests:
             SecurityLog.log_event(
                 event_type='rate_limit_exceeded',
                 ip_address=ip_address,
-                description=f'Extreme rate limit exceeded: {current_requests} requests/minute',
+                description=f'Rate limit exceeded: {current_requests} requests/minute',
                 severity='medium',
                 details={
                     'requests_count': current_requests,
@@ -125,34 +140,131 @@ class BotProtectionMiddleware:
         return False
     
     def _is_honeypot_access(self, request):
-        """Check if request is accessing obvious attack paths"""
+        """Check if request is accessing honeypot paths"""
         path = request.path.lower()
         return any(honeypot in path for honeypot in self.honeypot_paths)
     
-    def _is_obvious_bot(self, request):
-        """Only detect the most obvious bots - NOT browsers"""
+    def _detect_bot(self, request):
+        """Enhanced bot detection"""
         user_agent = request.META.get('HTTP_USER_AGENT', '')
+        client_ip = request.client_ip
         
-        # Don't block missing user agent - some browsers/apps don't send it
-        if not user_agent:
-            return False  # Changed from True to False
+        print(f"🔍 Middleware bot detection for {client_ip}")
+        print(f"📝 User Agent: {user_agent}")
         
-        # Only block obvious automated tools
-        for pattern in self.obvious_bot_patterns:
+        detection_result = {
+            'is_bot': False,
+            'should_block': False,
+            'confidence': 0.0,
+            'reason': 'unknown',
+            'methods': []
+        }
+        
+        # 1. Check for missing user agent
+        if not user_agent or len(user_agent.strip()) < 10:
+            print("🚨 Missing or very short user agent")
+            detection_result.update({
+                'is_bot': True,
+                'should_block': True,
+                'confidence': 0.8,
+                'reason': 'Missing or invalid user agent',
+                'methods': ['missing_user_agent']
+            })
+            return detection_result
+        
+        # 2. Check for automation tools (BLOCK)
+        for pattern in self.automation_patterns:
             if pattern.search(user_agent):
-                return True
+                print(f"🤖 Automation tool detected: {pattern.pattern}")
+                detection_result.update({
+                    'is_bot': True,
+                    'should_block': True,
+                    'confidence': 0.95,
+                    'reason': 'Automation tool detected',
+                    'methods': ['automation_tool']
+                })
+                return detection_result
         
-        # Don't block anything that looks like a browser
+        # 3. Check for social media bots (DON'T BLOCK, but log)
+        for pattern in self.social_bot_patterns:
+            if pattern.search(user_agent):
+                print(f"🤖📱 Social media bot detected: {pattern.pattern}")
+                detection_result.update({
+                    'is_bot': True,
+                    'should_block': False,  # Don't block social media bots
+                    'confidence': 0.9,
+                    'reason': 'Social media bot',
+                    'methods': ['social_media_bot']
+                })
+                return detection_result
+        
+        # 4. Check for generic bot patterns
+        for pattern in self.generic_bot_patterns:
+            if pattern.search(user_agent):
+                print(f"🤖 Generic bot pattern detected: {pattern.pattern}")
+                detection_result.update({
+                    'is_bot': True,
+                    'should_block': True,
+                    'confidence': 0.7,
+                    'reason': 'Generic bot pattern',
+                    'methods': ['generic_bot']
+                })
+                return detection_result
+        
+        # 5. Check if it looks like a browser
         browser_indicators = [
             'mozilla', 'chrome', 'safari', 'firefox', 'edge', 'opera',
-            'webkit', 'gecko', 'mobile', 'android', 'iphone', 'ipad'
+            'webkit', 'gecko', 'mobile', 'android', 'iphone', 'ipad',
+            'windows nt', 'macintosh', 'linux'
         ]
         
         user_agent_lower = user_agent.lower()
-        if any(indicator in user_agent_lower for indicator in browser_indicators):
-            return False  # It's a browser, don't block
+        browser_count = sum(1 for indicator in browser_indicators if indicator in user_agent_lower)
         
-        return False  # When in doubt, don't block
+        # If it has multiple browser indicators, it's likely a real browser
+        if browser_count >= 3:
+            print(f"✅ Multiple browser indicators detected ({browser_count})")
+            detection_result.update({
+                'is_bot': False,
+                'should_block': False,
+                'confidence': 0.1,
+                'reason': 'Browser detected',
+                'methods': ['browser_detected']
+            })
+            return detection_result
+        
+        # 6. Check for version patterns (browsers have versions)
+        version_patterns = [
+            r'chrome/[\d.]+', r'firefox/[\d.]+', r'safari/[\d.]+', r'edge/[\d.]+'
+        ]
+        
+        has_version = any(re.search(pattern, user_agent_lower) for pattern in version_patterns)
+        
+        if has_version and browser_count >= 2:
+            print("✅ Browser version pattern detected")
+            detection_result.update({
+                'is_bot': False,
+                'should_block': False,
+                'confidence': 0.1,
+                'reason': 'Browser with version detected',
+                'methods': ['browser_version_detected']
+            })
+            return detection_result
+        
+        # 7. If user agent is too simple (potential bot)
+        if len(user_agent) < 50 and browser_count < 2:
+            print("🚨 Suspiciously simple user agent")
+            detection_result.update({
+                'is_bot': True,
+                'should_block': True,
+                'confidence': 0.6,
+                'reason': 'Suspiciously simple user agent',
+                'methods': ['simple_user_agent']
+            })
+            return detection_result
+        
+        print("✅ Passed middleware bot detection")
+        return detection_result
     
     def _log_request_pattern(self, ip_address, request):
         """Log request pattern for analysis"""
@@ -171,8 +283,7 @@ class BotProtectionMiddleware:
                 user_agent_hash=user_agent_hash
             )
         except Exception as e:
-            # Don't fail requests due to logging issues
-            pass
+            pass  # Don't fail requests due to logging issues
     
     def _handle_honeypot_trigger(self, ip_address, request):
         """Handle honeypot trigger"""

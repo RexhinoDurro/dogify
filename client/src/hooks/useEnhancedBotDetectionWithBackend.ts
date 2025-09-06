@@ -1,4 +1,4 @@
-// Fixed useEnhancedBotDetectionWithBackend.ts - Backend-first approach
+// Fixed useEnhancedBotDetectionWithBackend.ts - Better bot detection
 import { useEffect, useState, useRef } from 'react';
 
 // Type definitions
@@ -98,89 +98,170 @@ const useEnhancedBotDetectionWithBackend = () => {
   const backendCommunicated = useRef<boolean>(false);
   const detectionTimeoutRef = useRef<number | null>(null);
 
-  // Very minimal local detection - only check for obvious patterns
-  const runMinimalLocalDetection = (): { isBot: boolean; confidence: number; methods: string[] } => {
+  // Enhanced local detection with proper bot patterns
+  const runEnhancedLocalDetection = (): { isBot: boolean; confidence: number; methods: string[] } => {
     const userAgent = navigator.userAgent || '';
     const methods: string[] = [];
     let confidence = 0;
 
-    // Only flag absolutely obvious automation tools
-    const obviousAutomationPatterns = [
+    console.log('🔍 Running enhanced local detection...');
+    console.log('📝 User Agent:', userAgent);
+
+    // 1. Check for obvious automation tools (HIGH CONFIDENCE)
+    const automationPatterns = [
       /\bcurl\b/i,
       /\bwget\b/i,
       /python-requests/i,
+      /python-urllib/i,
       /\bselenium\b/i,
       /puppeteer/i,
       /playwright/i,
+      /phantomjs/i,
+      /scrapy/i,
+      /mechanize/i,
+      /bot.*test|test.*bot/i,
     ];
 
-    for (const pattern of obviousAutomationPatterns) {
+    for (const pattern of automationPatterns) {
       if (pattern.test(userAgent)) {
-        methods.push('obvious_automation_tool');
-        confidence = 0.95;
+        methods.push('automation_tool_detected');
+        confidence = Math.max(confidence, 0.95);
+        console.log('🤖 Automation tool detected:', pattern);
         break;
       }
     }
 
-    // Check for Facebook patterns
-    const facebookPatterns = [
+    // 2. Check for social media bots
+    const socialBotPatterns = [
       /facebookexternalhit/i,
       /facebot/i,
       /facebookcatalog/i,
+      /twitterbot/i,
+      /linkedinbot/i,
+      /googlebot/i,
+      /bingbot/i,
     ];
 
-    for (const pattern of facebookPatterns) {
+    for (const pattern of socialBotPatterns) {
       if (pattern.test(userAgent)) {
-        methods.push('facebook_bot');
-        confidence = 0.95;
+        methods.push('social_media_bot');
+        confidence = Math.max(confidence, 0.9);
+        console.log('🤖📱 Social media bot detected:', pattern);
         break;
       }
     }
 
-    // Check if it looks like a browser (strong indicator it's NOT a bot)
-    const browserIndicators = [
-      'Mozilla/', 'Chrome/', 'Safari/', 'Firefox/', 'Edge/',
-      'Windows NT', 'Macintosh', 'Android', 'iPhone', 'iPad'
+    // 3. Check for generic bot patterns
+    const genericBotPatterns = [
+      /\bbot\b/i,
+      /\bcrawler\b/i,
+      /\bspider\b/i,
+      /\bscraper\b/i,
+      /monitoring/i,
+      /check/i,
+      /scan/i,
     ];
 
-    const hasBrowserIndicators = browserIndicators.some(indicator => 
-      userAgent.includes(indicator)
-    );
-
-    if (hasBrowserIndicators && confidence === 0) {
-      // Strong browser indicators and no automation patterns = likely human
-      confidence = 0.05; // Very low bot confidence
-      methods.push('browser_detected');
+    for (const pattern of genericBotPatterns) {
+      if (pattern.test(userAgent)) {
+        methods.push('generic_bot_pattern');
+        confidence = Math.max(confidence, 0.7);
+        console.log('🤖 Generic bot pattern detected:', pattern);
+        break;
+      }
     }
 
+    // 4. Check if user agent is missing or too short
+    if (!userAgent || userAgent.length < 10) {
+      methods.push('missing_or_short_user_agent');
+      confidence = Math.max(confidence, 0.8);
+      console.log('🚨 Missing or very short user agent');
+    }
+
+    // 5. Check for browser indicators (REDUCES confidence if present)
+    const browserIndicators = [
+      'mozilla', 'chrome', 'safari', 'firefox', 'edge', 'opera',
+      'webkit', 'gecko', 'mobile', 'android', 'iphone', 'ipad',
+      'windows nt', 'macintosh', 'linux'
+    ];
+
+    const userAgentLower = userAgent.toLowerCase();
+    const hasBrowserIndicators = browserIndicators.some(indicator => 
+      userAgentLower.includes(indicator)
+    );
+
+    if (hasBrowserIndicators) {
+      // Check for multiple browser indicators (real browsers have multiple)
+      const browserCount = browserIndicators.filter(indicator => 
+        userAgentLower.includes(indicator)
+      ).length;
+
+      if (browserCount >= 3) {
+        console.log('✅ Multiple browser indicators detected, reducing bot confidence');
+        confidence = confidence * 0.3; // Significantly reduce confidence
+        methods.push('browser_indicators_detected');
+      }
+    }
+
+    // 6. Enhanced browser version check
+    const versionPatterns = [
+      /chrome\/[\d.]+/i,
+      /firefox\/[\d.]+/i,
+      /safari\/[\d.]+/i,
+      /edge\/[\d.]+/i,
+    ];
+
+    const hasVersionPattern = versionPatterns.some(pattern => pattern.test(userAgent));
+    if (hasVersionPattern && hasBrowserIndicators) {
+      console.log('✅ Browser version pattern detected');
+      confidence = confidence * 0.2; // Very strong reduction for version + browser indicators
+      methods.push('browser_version_detected');
+    }
+
+    // 7. Check for complex user agent structure (browsers have complex UAs)
+    if (userAgent.length > 50 && userAgent.includes('(') && userAgent.includes(')')) {
+      console.log('✅ Complex user agent structure detected');
+      confidence = confidence * 0.5; // Reduce confidence for complex structure
+      methods.push('complex_ua_structure');
+    }
+
+    console.log('📊 Local detection results:', {
+      confidence: confidence,
+      methods: methods,
+      hasBrowserIndicators: hasBrowserIndicators,
+      userAgentLength: userAgent.length
+    });
+
     return {
-      isBot: confidence >= 0.8,
+      isBot: confidence >= 0.6, // Adjusted threshold
       confidence,
       methods
     };
   };
 
-  // Generate basic fingerprint
-  const generateBasicFingerprint = (): string => {
+  // Generate enhanced fingerprint
+  const generateEnhancedFingerprint = (): string => {
     const components = [
       `screen:${screen.width}x${screen.height}x${screen.colorDepth}`,
       `tz:${new Date().getTimezoneOffset()}`,
       `lang:${navigator.language}`,
       `ua_len:${navigator.userAgent.length}`,
+      `plugins:${navigator.plugins?.length || 0}`,
+      `touch:${navigator.maxTouchPoints || 0}`,
     ];
 
     return btoa(components.join('|')).substring(0, 32);
   };
 
-  // Backend communication - primary detection method
+  // Backend communication with proper error handling
   const communicateWithBackend = async (): Promise<void> => {
     if (backendCommunicated.current) return;
 
     try {
-      console.log('🔍 Starting backend-first bot detection...');
+      console.log('🔍 Starting enhanced backend detection...');
       
-      const localDetection = runMinimalLocalDetection();
-      const fingerprint = generateBasicFingerprint();
+      const localDetection = runEnhancedLocalDetection();
+      const fingerprint = generateEnhancedFingerprint();
 
       const requestData = {
         user_agent: navigator.userAgent,
@@ -192,6 +273,12 @@ const useEnhancedBotDetectionWithBackend = () => {
         timestamp: new Date().toISOString(),
         url_path: window.location.pathname,
         referrer: document.referrer,
+        page: window.location.href,
+        headers: {
+          'User-Agent': navigator.userAgent,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': navigator.language,
+        }
       };
 
       console.log('📡 Sending request to backend:', {
@@ -213,7 +300,7 @@ const useEnhancedBotDetectionWithBackend = () => {
       backendCommunicated.current = true;
 
       if (response.status === 403) {
-        // Backend blocked - but check the response
+        // Backend blocked - parse the response
         let blockData: any = {};
         try {
           blockData = await response.json();
@@ -245,7 +332,7 @@ const useEnhancedBotDetectionWithBackend = () => {
         const result: BackendResult = await response.json();
         console.log('✅ Backend verification result:', result);
         
-        // Trust the backend completely
+        // Trust the backend result
         setDetectionResult(prev => ({
           ...prev,
           backendVerified: true,
@@ -262,20 +349,20 @@ const useEnhancedBotDetectionWithBackend = () => {
       } else {
         console.warn('⚠️ Backend verification failed:', response.status);
         
-        // On backend failure, use local detection but be very conservative
+        // On backend failure, use local detection with reduced confidence
         setDetectionResult(prev => ({
           ...prev,
           backendVerified: false,
           backendResult: { 
             status: 'error',
             is_bot: localDetection.isBot,
-            blocked: false, // Don't block on backend failure
-            confidence: localDetection.confidence * 0.5, // Reduce confidence
+            blocked: false,
+            confidence: localDetection.confidence * 0.7, // Reduce confidence on backend failure
             error: `HTTP ${response.status}` 
           },
-          isBot: localDetection.isBot && localDetection.confidence >= 0.95, // Very high threshold
-          confidence: localDetection.confidence * 0.5,
-          shouldBlock: false, // Never block on backend failure
+          isBot: localDetection.isBot && localDetection.confidence >= 0.8, // Higher threshold
+          confidence: localDetection.confidence * 0.7,
+          shouldBlock: false, // Don't block on backend failure
           detectionMethods: localDetection.methods,
           fingerprint: fingerprint
         }));
@@ -285,29 +372,29 @@ const useEnhancedBotDetectionWithBackend = () => {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error('❌ Backend communication error:', errorMessage);
       
-      // On error, run local detection but be very conservative
-      const localDetection = runMinimalLocalDetection();
+      // On error, run local detection but be conservative
+      const localDetection = runEnhancedLocalDetection();
       
       setDetectionResult(prev => ({
         ...prev,
         backendVerified: false,
         backendResult: { 
           status: 'error',
-          is_bot: false, // Assume human on error
+          is_bot: localDetection.isBot,
           blocked: false,
-          confidence: 0.1,
+          confidence: localDetection.confidence * 0.5, // Very conservative
           error: errorMessage 
         },
-        isBot: localDetection.confidence >= 0.95, // Only if very obvious
-        confidence: Math.min(localDetection.confidence * 0.3, 0.3), // Very low confidence
-        shouldBlock: false, // Never block on error
+        isBot: localDetection.confidence >= 0.9, // Very high threshold on error
+        confidence: Math.min(localDetection.confidence * 0.5, 0.5),
+        shouldBlock: false,
         detectionMethods: localDetection.methods.length > 0 ? localDetection.methods : ['error_fallback'],
-        fingerprint: generateBasicFingerprint()
+        fingerprint: generateEnhancedFingerprint()
       }));
     }
   };
 
-  // Behavior tracking (simplified)
+  // Enhanced behavior tracking
   useEffect(() => {
     let mouseMovements = 0;
     let keyboardEvents = 0;
@@ -382,18 +469,32 @@ const useEnhancedBotDetectionWithBackend = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Detection lifecycle - backend first
+  // Detection lifecycle - immediate for obvious bots
   useEffect(() => {
-    // Quick local check for obvious bots
-    const quickCheck = setTimeout(async () => {
-      const localDetection = runMinimalLocalDetection();
+    // Immediate check for obvious automation tools
+    const immediateCheck = setTimeout(async () => {
+      const localDetection = runEnhancedLocalDetection();
       
-      // If obvious automation tool, communicate immediately
-      if (localDetection.confidence >= 0.95) {
-        console.log('⚡ Obvious automation detected, contacting backend immediately');
+      console.log('⚡ Immediate detection results:', localDetection);
+      
+      // If very high confidence bot, communicate immediately
+      if (localDetection.confidence >= 0.9) {
+        console.log('⚡ Very high confidence bot detected, contacting backend immediately');
         await communicateWithBackend();
       }
-    }, 500);
+    }, 100);
+
+    // Quick check for medium confidence
+    const quickCheck = setTimeout(async () => {
+      if (!backendCommunicated.current) {
+        const localDetection = runEnhancedLocalDetection();
+        
+        if (localDetection.confidence >= 0.7) {
+          console.log('⚡ High confidence bot detected, contacting backend');
+          await communicateWithBackend();
+        }
+      }
+    }, 1000);
 
     // Main backend communication
     const mainDetection = setTimeout(async () => {
@@ -401,42 +502,37 @@ const useEnhancedBotDetectionWithBackend = () => {
         console.log('🚀 Running main backend detection...');
         await communicateWithBackend();
       }
-    }, 2000);
+    }, 3000);
 
-    // Fallback check
-    const fallbackCheck = setTimeout(async () => {
-      if (!backendCommunicated.current) {
-        console.log('🔍 Running fallback detection check...');
-        await communicateWithBackend();
-      }
-    }, 8000);
-
-    // Final timeout - assume human if backend never responds
+    // Final timeout - if no backend response, use local detection
     detectionTimeoutRef.current = window.setTimeout(() => {
       if (!backendCommunicated.current) {
-        console.log('⏰ Backend timeout - assuming human');
+        console.log('⏰ Backend timeout - using local detection only');
+        
+        const localDetection = runEnhancedLocalDetection();
+        
         setDetectionResult(prev => ({
           ...prev,
           backendVerified: false,
           backendResult: { 
             status: 'timeout',
-            is_bot: false,
+            is_bot: localDetection.isBot,
             blocked: false,
-            confidence: 0.1,
-            error: 'Backend timeout - assuming human'
+            confidence: localDetection.confidence * 0.8, // Reduce confidence on timeout
+            error: 'Backend timeout - using local detection'
           },
-          isBot: false,
-          confidence: 0.1,
-          shouldBlock: false,
-          detectionMethods: ['backend_timeout_assume_human']
+          isBot: localDetection.isBot && localDetection.confidence >= 0.8,
+          confidence: localDetection.confidence * 0.8,
+          shouldBlock: false, // Don't block on timeout
+          detectionMethods: localDetection.methods.length > 0 ? localDetection.methods : ['local_detection_only']
         }));
       }
-    }, 15000);
+    }, 10000);
 
     return () => {
+      clearTimeout(immediateCheck);
       clearTimeout(quickCheck);
       clearTimeout(mainDetection);
-      clearTimeout(fallbackCheck);
       if (detectionTimeoutRef.current) {
         window.clearTimeout(detectionTimeoutRef.current);
       }

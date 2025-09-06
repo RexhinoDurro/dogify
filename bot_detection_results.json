@@ -1,6 +1,6 @@
 [
   {
-    "timestamp": "2025-09-06T01:01:29.805349",
+    "timestamp": "2025-09-06T02:08:20.767119",
     "stealth_level": "obvious",
     "behavior": "rapid_clicking",
     "detection_indicators": {
@@ -9,11 +9,11 @@
       "rate_limited": false,
       "suspicious_redirect": false
     },
-    "screenshot": "test_obvious_rapid_clicking_1757113289.png",
+    "screenshot": "test_obvious_rapid_clicking_1757117300.png",
     "final_url": "https://formsite-admin.click/"
   },
   {
-    "timestamp": "2025-09-06T01:01:41.244548",
+    "timestamp": "2025-09-06T02:08:31.655654",
     "stealth_level": "obvious",
     "behavior": "no_mouse_movement",
     "detection_indicators": {
@@ -22,11 +22,11 @@
       "rate_limited": false,
       "suspicious_redirect": false
     },
-    "screenshot": "test_obvious_no_mouse_movement_1757113299.png",
+    "screenshot": "test_obvious_no_mouse_movement_1757117310.png",
     "final_url": "https://formsite-admin.click/"
   },
   {
-    "timestamp": "2025-09-06T01:02:01.985968",
+    "timestamp": "2025-09-06T02:08:52.577933",
     "stealth_level": "obvious",
     "behavior": "perfect_timing",
     "detection_indicators": {
@@ -35,11 +35,11 @@
       "rate_limited": false,
       "suspicious_redirect": false
     },
-    "screenshot": "test_obvious_perfect_timing_1757113310.png",
+    "screenshot": "test_obvious_perfect_timing_1757117321.png",
     "final_url": "https://formsite-admin.click/"
   },
   {
-    "timestamp": "2025-09-06T01:02:12.800017",
+    "timestamp": "2025-09-06T02:09:03.010183",
     "stealth_level": "obvious",
     "behavior": "form_spam",
     "detection_indicators": {
@@ -48,11 +48,11 @@
       "rate_limited": false,
       "suspicious_redirect": false
     },
-    "screenshot": "test_obvious_form_spam_1757113332.png",
+    "screenshot": "test_obvious_form_spam_1757117342.png",
     "final_url": "https://formsite-admin.click/"
   },
   {
-    "timestamp": "2025-09-06T01:02:23.363558",
+    "timestamp": "2025-09-06T02:09:13.210930",
     "stealth_level": "moderate",
     "behavior": "rapid_clicking",
     "detection_indicators": {
@@ -61,11 +61,11 @@
       "rate_limited": false,
       "suspicious_redirect": false
     },
-    "screenshot": "test_moderate_rapid_clicking_1757113342.png",
+    "screenshot": "test_moderate_rapid_clicking_1757117352.png",
     "final_url": "https://formsite-admin.click/"
   },
   {
-    "timestamp": "2025-09-06T01:02:41.636627",
+    "timestamp": "2025-09-06T02:09:28.864177",
     "stealth_level": "stealth",
     "behavior": "human_like",
     "detection_indicators": {
@@ -74,7 +74,7 @@
       "rate_limited": false,
       "suspicious_redirect": false
     },
-    "screenshot": "test_stealth_human_like_1757113352.png",
+    "screenshot": "test_stealth_human_like_1757117362.png",
     "final_url": "https://formsite-admin.click/"
   }
 ]
